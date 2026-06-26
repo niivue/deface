@@ -136,10 +136,13 @@ try {
     console.log('• skipped slow -deface path (set SMOKE_FULL=1 to include)')
   }
 
-  // 6. no uncaught page errors; report (don't hard-fail) console.error noise
+  // 6. Fatal on any uncaught page error OR console.error. The app is expected to
+  // run clean (niimath chatter is buffered, the favicon 404 is suppressed); a
+  // console error means a real regression. If a benign third-party error ever
+  // appears, narrow it with an explicit allowlist here rather than downgrading.
   if (pageErrors.length) await fail('uncaught page errors:\n  ' + pageErrors.join('\n  '), page)
-  if (consoleErrors.length) console.warn('⚠ console.error output (review):\n  ' + consoleErrors.join('\n  '))
-  else console.log('✓ no console.error output')
+  if (consoleErrors.length) await fail('console.error output:\n  ' + consoleErrors.join('\n  '), page)
+  console.log('✓ no console.error output')
 
   console.log('\n✅ SMOKE PASS')
   await browser.close()
