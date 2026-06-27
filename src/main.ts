@@ -28,7 +28,6 @@ function $<T extends HTMLElement>(id: string): T {
 
 // --- DOM handles ---
 const locationEl = $('location')
-const memstatus = $('memstatus')
 const loadingCircle = $('loadingCircle')
 const statusMsg = $<HTMLLabelElement>('statusMsg')
 const methodSelect = $<HTMLSelectElement>('methodSelect')
@@ -266,14 +265,6 @@ async function handleDrop(filesPromise: Promise<File[]>): Promise<void> {
 
 // --- Init ---
 async function init(): Promise<void> {
-  if (!navigator.gpu) {
-    memstatus.textContent = 'WebGPU unavailable'
-    memstatus.style.color = 'red'
-    setStatus('This viewer needs WebGPU — try recent desktop Chrome, Edge, or Safari.')
-    return
-  }
-  memstatus.textContent = 'WebGPU ready'
-  memstatus.style.color = 'green'
   await attachNiiVue() // safe now that navigator.gpu is confirmed
   setStatus('Loading default image + MNI template…')
   // Fetch the bundled template/mask once; load the default subject.

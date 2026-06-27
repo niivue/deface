@@ -89,24 +89,16 @@ try {
 
   await page.goto(URL, { waitUntil: 'domcontentloaded' })
 
-  // 1. WebGPU attaches (the friendly-fallback path would set this to 'WebGPU unavailable')
-  await page.waitForFunction(
-    () => {
-      const t = document.getElementById('memstatus')?.textContent || ''
-      if (t.includes('unavailable')) throw new Error('WebGPU unavailable')
-      return t === 'WebGPU ready'
-    },
-    undefined,
-    { timeout: 30000 },
-  ).catch((e) => fail(`NiiVue did not report "WebGPU ready" (${e.message})`, page))
-
-  // 2. default image + MNI template fetched and ready (Apply enabled)
+  // 1. App initialized: Apply enables only after init() runs attachNiiVue() (NiiVue
+  // attaches) AND the default image + MNI template load — so this single wait
+  // subsumes the old explicit WebGPU-ready check (the #memstatus indicator was
+  // removed; init failure leaves Apply disabled and this fails with a clear msg).
   await page.waitForSelector('#applyBtn:not([disabled])', { timeout: 30000 })
-    .catch(() => fail('Apply never enabled (default image / refs not ready)', page))
+    .catch(() => fail('Apply never enabled (NiiVue attach / default image / refs not ready)', page))
   // M2 privacy guard: Save must be DISABLED before any deface, so the un-defaced
   // source can't be downloaded as defaced.nii.gz.
   if (!(await page.isDisabled('#saveBtn'))) await fail('Save enabled before any deface (M2 privacy footgun)', page)
-  console.log('✓ WebGPU ready, default image loaded, refs fetched, Save correctly disabled pre-deface')
+  console.log('✓ App initialized (NiiVue attached, default image + refs loaded), Save correctly disabled pre-deface')
 
   // 3. Apply spm_deface
   await page.selectOption('#methodSelect', 'spm_deface')
