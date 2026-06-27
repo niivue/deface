@@ -84,6 +84,8 @@ const ac = { signal: listeners.signal }
 // --- Status helpers ---
 function setStatus(msg: string): void {
   statusMsg.textContent = msg
+  // The footer cell ellipsizes; expose the full text (esp. long failures) on hover.
+  statusMsg.title = msg
   statusMsg.classList.toggle('hidden', msg === '')
 }
 function spin(on: boolean): void {
@@ -125,6 +127,21 @@ function enqueue(fn: () => Promise<unknown>): void {
 async function ensureNiimath(): Promise<void> {
   if (!niimathReady) niimathReady = niimath.init().then(() => undefined)
   await niimathReady
+}
+
+// After a failed/aborted niimath run (incl. OOM, which the WASM allocators bail on
+// via longjmp), the worker's WASM heap and Emscripten MEMFS may be in an undefined
+// state. Tear the worker down and clear niimathReady so the next run spins up a
+// fresh one rather than reusing leaked/stale state. (Uses the same field access as
+// cleanup(); the vendored wrapper exposes no public terminate.)
+function resetNiimathWorker(): void {
+  try {
+    ;(niimath as unknown as { worker?: Worker }).worker?.terminate()
+    ;(niimath as unknown as { worker: Worker | null }).worker = null
+  } catch {
+    // worker may already be gone
+  }
+  niimathReady = null
 }
 
 async function fetchFile(url: string, name: string): Promise<File> {
@@ -176,6 +193,12 @@ async function runDeface(): Promise<void> {
     await loadFromFile(out, false) // display result; keep sourceFile pristine
     const ms = Math.round(performance.now() - t0)
     setStatus(`Defaced with ${method} (${ms} ms)`)
+  } catch (err) {
+    // A failed/OOM run can leave the worker's WASM heap + MEMFS corrupt; recreate
+    // it before the next Apply so a retry starts clean. Rethrow so enqueue() still
+    // reports "Failed: …".
+    resetNiimathWorker()
+    throw err
   } finally {
     spin(false)
     updateButtons()
