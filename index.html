@@ -23,8 +23,6 @@
       <button id="applyBtn">Apply</button>
       <button disabled id="saveBtn">Save Image</button>
       <button id="aboutBtn">About</button>
-      <div id="loadingCircle" class="loading-circle hidden"></div>
-      <label id="statusMsg" class="hidden"></label>
     </div>
   </header>
 
@@ -37,6 +35,10 @@
       <table class="footer">
         <tr>
           <th id="location">Drag &amp; drop a NIfTI image or a folder of DICOM files</th>
+          <th>
+            <div id="loadingCircle" class="loading-circle hidden"></div>
+            <label id="statusMsg" class="hidden"></label>
+          </th>
           <th>
             <div class="footer" id="memstatus" style="color: green">Checking GPU…</div>
           </th>
