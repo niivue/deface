@@ -17,8 +17,8 @@ import { runDcm2niix, traverseDataTransferItems } from './dcm2niix/index'
 import { Niimath } from './niimath-gpl/index'
 
 const T1_URL = `${import.meta.env.BASE_URL}t1_crop.nii.gz`
-const MNI_URL = `${import.meta.env.BASE_URL}MNI152_T1_2mm.nii.gz`
-const MASK_URL = `${import.meta.env.BASE_URL}mniMask.nii.gz`
+const MNI_URL = `${import.meta.env.BASE_URL}avg152T1.nii.gz`
+const MASK_URL = `${import.meta.env.BASE_URL}avg152T1mask.nii.gz`
 
 function $<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id)
