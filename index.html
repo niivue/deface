@@ -6,15 +6,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <!-- empty favicon: suppress the browser's default /favicon.ico request (404) -->
   <link rel="icon" href="data:," />
-  <title>deface — browser MRI defacing</title>
-  <script type="module" crossorigin src="/deface/assets/index-BtTvQ4Ax.js"></script>
+  <title>browser MRI defacing</title>
+  <script type="module" crossorigin src="/deface/assets/index-DV8X1YfV.js"></script>
   <link rel="stylesheet" crossorigin href="/deface/assets/index-CyQ5183S.css">
 </head>
 
 <body>
   <header>
     <div class="row">
-      <label><strong>Deface:</strong></label>
       <label for="methodSelect">Method</label>
       <select id="methodSelect" title="SPM rigid coregistration (GPL) or AFNI 3dAllineate affine (BSD)">
         <option value="spm_deface" selected>spm_deface (SPM rigid)</option>
@@ -38,9 +37,6 @@
           <th>
             <div id="loadingCircle" class="loading-circle hidden"></div>
             <label id="statusMsg" class="hidden"></label>
-          </th>
-          <th>
-            <div class="footer" id="memstatus" style="color: green">Checking GPU…</div>
           </th>
         </tr>
       </table>
