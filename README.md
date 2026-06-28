@@ -8,10 +8,11 @@ Live demo: deploys as a GitHub Project Page at `https://<org>.github.io/deface/`
 
 All processing runs in WebAssembly + WebGPU on your machine so your images are not shared with the cloud:
 
-- **[niimath](https://github.com/rordenlab/niimath)** does the defacing. It registers a bundled MNI template to your scan and zeros the voxels over the face, via one of two backends:
+- **[niimath](https://github.com/rordenlab/niimath)** does the registration-based defacing. It fits a bundled MNI template to your scan and zeros the voxels over the face, via either:
   - **spm_deface** — SPM rigid-body coregistration ([spm_coreg](https://www.fil.ion.ucl.ac.uk/spm/), J. Ashburner / Wellcome Centre)
   - **deface** — affine registration ([3dAllineate](https://afni.nimh.nih.gov/), RW Cox / AFNI)
-- **[NiiVue](https://niivue.com/)** renders the image (WebGPU).
+- **[brainchop mindgrab](https://github.com/neuroneural/brainchop)** — an edge-based AI model for omnimodal brain extraction, run entirely on the GPU. It masks out everything but the brain, so it removes the face along with the skull and scalp. Variants combine two knobs — a tight skull-strip vs. an **8mm** tissue margin around the brain, and optional **robustfov** neck/inferior-slice cropping: **mindgrab**, **mindgrab robustfov**, **mindgrab 8mm border**, and **mindgrab robustfov + 8mm**. Requires **WebGPU with `shader-f16`** (recent desktop Chrome, Edge, or Safari).
+- **[NiiVue](https://niivue.com/)** renders the image.
 - **[dcm2niix](https://github.com/rordenlab/dcm2niix)** converts dropped DICOM folders to NIfTI.
 
 The core operation is a single niimath chain, e.g.:

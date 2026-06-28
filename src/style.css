@@ -126,6 +126,10 @@ table.footer th {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* Reserve the spinner's box height (18px glyph + 2×3px border = 24px) so the
+     status bar doesn't grow/shrink — and flicker the canvas — as it toggles. */
+  height: 24px;
+  vertical-align: middle;
 }
 
 table.footer th:nth-child(2) {
@@ -145,6 +149,9 @@ table.footer th:last-child {
   border-top-color: #fff;
   animation: spin 1s linear infinite;
   vertical-align: middle;
+  /* Always occupy its box; spin() only toggles visibility, so showing/hiding the
+     spinner causes no reflow and the status bar never flickers. */
+  visibility: hidden;
 }
 
 #statusMsg {

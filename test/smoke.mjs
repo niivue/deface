@@ -38,11 +38,20 @@ const cleanup = () => {
 process.on('exit', cleanup)
 process.on('SIGINT', () => { cleanup(); process.exit(130) })
 
+// --strictPort makes vite exit non-zero on a port clash; catch that so the test
+// fails fast instead of polling a port served by some other (stale) process.
+let previewExited = false
+let previewExitCode = null
+preview.on('exit', (code) => { previewExited = true; previewExitCode = code })
+
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
 // poll the server until it answers
 async function waitForServer(timeoutMs = 15000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
+    if (previewExited) {
+      throw new Error(`vite preview exited (code ${previewExitCode}) before ready — port ${PORT} clash?`)
+    }
     try {
       const res = await fetch(URL)
       if (res.ok) return
@@ -115,6 +124,55 @@ try {
     page.click('#saveBtn'),
   ]).catch(() => fail('Save did not produce a download', page))
   console.log('✓ Save produced a download:', download.suggestedFilename())
+
+  // 4b. mindgrab: needs WebGPU + shader-f16. Headless SwiftShader lacks f16, so the
+  // expected outcome here is the graceful "needs WebGPU" dialog (NOT a crash). On a
+  // real f16 GPU the run completes instead — accept either, fail only on neither.
+  await page.selectOption('#methodSelect', 'mindgrab')
+  await page.click('#applyBtn')
+  const mindgrabOutcome = await page
+    .waitForFunction(
+      () =>
+        document.getElementById('webgpuDialog')?.open === true ||
+        (document.getElementById('statusMsg')?.textContent || '').includes('Brain-extracted with mindgrab'),
+      undefined,
+      { timeout: 120000 },
+    )
+    .then(() => true)
+    .catch(() => false)
+  if (!mindgrabOutcome) await fail('mindgrab neither completed nor showed the WebGPU dialog', page)
+  const usedDialog = await page.evaluate(() => document.getElementById('webgpuDialog')?.open === true)
+  if (!usedDialog) await page.screenshot({ path: join(here, 'smoke-mindgrab.png') })
+  console.log(usedDialog ? '✓ mindgrab gated on missing WebGPU/f16 (dialog shown)' : '✓ mindgrab ran and displayed')
+  if (usedDialog) {
+    await page.click('#webgpuDialog button') // dismiss so it doesn't mask later checks
+  } else {
+    // GPU path available: also exercise the 8 mm border variant (the `-close 1 8 0`
+    // grow path, distinct niimath op from the tight mask's `-bin`).
+    await page.selectOption('#methodSelect', 'mindgrab8')
+    await page.click('#applyBtn')
+    await waitStatus(page, 'Brain-extracted with mindgrab (8 mm border)', 120000)
+      .catch(() => fail('mindgrab 8mm border did not complete', page))
+    await page.screenshot({ path: join(here, 'smoke-mindgrab8.png') })
+    console.log('✓ mindgrab 8mm border ran and displayed')
+
+    // …the tight robustfov variant: whole pipeline on a robustfov-cropped copy,
+    // no border grow (covers the robustfov + `-bin` combination).
+    await page.selectOption('#methodSelect', 'mindgrab_robust')
+    await page.click('#applyBtn')
+    await waitStatus(page, 'Brain-extracted with mindgrab (robustfov + tight)', 120000)
+      .catch(() => fail('mindgrab robustfov (tight) did not complete', page))
+    console.log('✓ mindgrab robustfov (tight) ran and displayed')
+
+    // …and the robustfov + 8 mm variant: the whole pipeline runs on a niimath
+    // robustfov-cropped copy (single coordinate space), then the 8 mm grow.
+    await page.selectOption('#methodSelect', 'mindgrab_robust8')
+    await page.click('#applyBtn')
+    await waitStatus(page, 'Brain-extracted with mindgrab (robustfov + 8 mm border)', 120000)
+      .catch(() => fail('mindgrab robustfov + 8mm did not complete', page))
+    await page.screenshot({ path: join(here, 'smoke-mindgrab-robust8.png') })
+    console.log('✓ mindgrab robustfov + 8mm ran and displayed')
+  }
 
   // 5. (optional) the slow affine path
   if (FULL) {

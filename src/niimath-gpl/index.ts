@@ -171,14 +171,26 @@ class ImageProcessor {
     return this._addFileCommand('-spm_deface', [tmpl, mask], opts);
   }
 
-  // SPM rigid-body coregistration (GPL): -spmcoreg <ref> [opts]
+  // SPM rigid-body coregistration (GPL): -spm_coreg <ref> [opts]
   spmcoreg(ref: File, opts: (string | number)[] = []): this {
-    return this._addFileCommand('-spmcoreg', [ref], opts);
+    return this._addFileCommand('-spm_coreg', [ref], opts);
   }
 
   // Affine registration (BSD allineate): -allineate <base> [opts]
   allineate(base: File, opts: (string | number)[] = []): this {
     return this._addFileCommand('-allineate', [base], opts);
+  }
+
+  // Nearest-neighbour reslice of the current image onto another image's grid:
+  // -reslice_nn <ref>. Used to bring a conformed-space mask onto the native grid.
+  resliceNN(ref: File): this {
+    return this._addFileCommand('-reslice_nn', [ref]);
+  }
+
+  // Multiply the current image by another staged image: -mul <img>. The generated
+  // `mul` only emits a literal token; this stages the operand File into MEMFS.
+  mulImage(img: File): this {
+    return this._addFileCommand('-mul', [img]);
   }
 
   private _generateMethods(): void {

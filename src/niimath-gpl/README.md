@@ -32,12 +32,14 @@ for the generated `niimath.js` default export.
 GPL compliance: this binary's corresponding source is the niimath tree + its
 `src/GPL` submodule at the SHAs below. **Record both at every vendor/regenerate.**
 
-- niimath commit: `86d5d715ecd293aadd92c5ab42450ba69a5c15d5`
-- `src/GPL` submodule commit: `0138de44bade572d3d97b3de5a2dd0671d6213c7`
+- niimath commit: `f64ea66c8f1df7b36dfef9f8afea8d4ce545a47b`
+- `src/GPL` submodule commit: `d589203cb9a0b0bf8899aa365740c85ba00c825e`
 - emscripten: `emcc 6.0.1`
-- `niimath.wasm` SHA-256: `a4022fd47679c9a572389a5a241bb6451786d6521ff3090ab807b8db00b9c50b`
+- `niimath.wasm` SHA-256: `8242e33b2009e956bdf7f8ba987e7d2088b96f96f7df215febd2419901ebd3eb`
 
-The `GPL=1 make wasm` build is **byte-for-byte deterministic** (verified: two clean
-builds and this vendored copy share the SHA-256 above), so the artifact is fully
-reproducible by checking out the niimath commit above (with `src/GPL` at the listed
-submodule commit) and running `GPL=1 make wasm`.
+The `GPL=1 make wasm` build is **byte-for-byte deterministic** — **verified**: a clean
+`GPL=1 make wasm -C ../src` from the niimath commit above (with `src/GPL` at the listed
+submodule commit, under emcc 6.0.1) reproduces this exact SHA-256. So the artifact is
+fully reproducible by checking out that commit and running `GPL=1 make wasm`. Note the
+GPL code is now a `src/GPL` submodule of the main `rordenlab/niimath` repo (not yet on
+npm, so this app vendors its own GPL build).
