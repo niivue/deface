@@ -167,12 +167,12 @@ async function runDeface(): Promise<void> {
   if (!sourceFile || !refFiles) return
   spin(true)
   const method = methodSelect.value // 'spm_deface' | 'deface'
-  // Single-threaded WASM: SPM rigid coreg is ~10–30 s; the affine -deface path is
-  // markedly slower (~60 s on the default image), so set expectations per method.
+  // Single-threaded WASM: SPM rigid coreg is ~5 s; the affine -deface path is
+  // markedly slower (~20 s on the default image), so set expectations per method.
   setStatus(
     method === 'spm_deface'
-      ? 'Defacing with spm_deface… (single-threaded WASM, ~10–30 s)'
-      : 'Defacing with deface (affine)… (single-threaded WASM, up to ~60 s)',
+      ? 'Defacing with spm_deface… (rigid ~5 s)'
+      : 'Defacing with deface (affine ~20 s)…',
   )
   const t0 = performance.now()
   try {
