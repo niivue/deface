@@ -7,17 +7,21 @@
   <!-- empty favicon: suppress the browser's default /favicon.ico request (404) -->
   <link rel="icon" href="data:," />
   <title>browser MRI defacing</title>
-  <script type="module" crossorigin src="/deface/assets/index-C0xlY31Y.js"></script>
-  <link rel="stylesheet" crossorigin href="/deface/assets/index-CyQ5183S.css">
+  <script type="module" crossorigin src="/deface/assets/index-CBOSMQZy.js"></script>
+  <link rel="stylesheet" crossorigin href="/deface/assets/index-7XAWQwqA.css">
 </head>
 
 <body>
   <header>
     <div class="row">
       <label for="methodSelect">Method</label>
-      <select id="methodSelect" title="SPM rigid coregistration (GPL) or AFNI 3dAllineate affine (BSD)">
+      <select id="methodSelect" title="SPM rigid coregistration (GPL), AFNI 3dAllineate affine (BSD), or MindGrab brain extraction (WebGPU)">
         <option value="spm_deface">spm_deface (SPM rigid)</option>
         <option value="deface" selected>deface (allineate affine)</option>
+        <option value="mindgrab">mindgrab (WebGPU)</option>
+        <option value="mindgrab_robust">mindgrab robustfov (WebGPU)</option>
+        <option value="mindgrab8">mindgrab 8mm border (WebGPU)</option>
+        <option value="mindgrab_robust8">mindgrab robustfov + 8mm (WebGPU)</option>
       </select>
       <button id="applyBtn">Apply</button>
       <button disabled id="saveBtn">Save Image</button>
@@ -35,7 +39,7 @@
         <tr>
           <th id="location">Drag &amp; drop a NIfTI image or a folder of DICOM files</th>
           <th>
-            <div id="loadingCircle" class="loading-circle hidden"></div>
+            <div id="loadingCircle" class="loading-circle"></div>
             <label id="statusMsg" class="hidden"></label>
           </th>
         </tr>
@@ -60,6 +64,9 @@
         <li><strong>deface</strong> — affine registration
           (<a href="https://afni.nimh.nih.gov/pub/dist/doc/program_help/3dAllineate.html" target="_blank"
             rel="noopener">3dAllineate</a>, RW Cox / AFNI)</li>
+        <li><strong>mindgrab</strong> — deep-learning brain extraction (skull-strip): a
+          <a href="https://github.com/neuroneural/brainchop" target="_blank" rel="noopener">brainchop</a>-style
+          model runs entirely on the GPU (<strong>WebGPU, shader-f16</strong>) to mask out everything but the brain</li>
       </ul>
       <p>Visualization uses <a href="https://niivue.com/" target="_blank" rel="noopener">NiiVue</a>;
         DICOM import uses <a href="https://github.com/rordenlab/dcm2niix" target="_blank" rel="noopener">dcm2niix</a>.
@@ -67,7 +74,20 @@
       <p><small>Because the SPM <code>spm_deface</code> path links the GPL <code>spm_coreg</code> module, this app is
         licensed <strong>GPL-2</strong>. Requires a browser with WebGPU (recent desktop Chrome, Edge, or Safari).</small>
       </p>
+      <!-- Build provenance; update on each niimath re-vendor (matches src/niimath-gpl/niimath.wasm). -->
+      <p><small>Build: niimath <strong>v1.0.20260627</strong> (GPL) · thread-deterministic registration, fails closed on out-of-memory.</small></p>
       <button autofocus id="closeAboutBtn" value="default">Close</button>
+    </form>
+  </dialog>
+
+  <dialog id="webgpuDialog">
+    <form method="dialog">
+      <h3>MindGrab needs WebGPU</h3>
+      <p>The <strong>mindgrab</strong> brain-extraction method runs a neural network on the GPU and needs
+        <strong>WebGPU with the <code>shader-f16</code> feature</strong> (recent desktop Chrome, Edge, or Safari).
+        This browser doesn't provide it.</p>
+      <p>Use <strong>spm_deface</strong> or <strong>deface</strong> instead — they run in WebAssembly and need no WebGPU.</p>
+      <button autofocus value="default">Close</button>
     </form>
   </dialog>
 
