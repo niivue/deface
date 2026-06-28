@@ -32,10 +32,10 @@ for the generated `niimath.js` default export.
 GPL compliance: this binary's corresponding source is the niimath tree + its
 `src/GPL` submodule at the SHAs below. **Record both at every vendor/regenerate.**
 
-- niimath commit: `7e4a2d57eb404471de7af1c3392466fb4521ad5d`
+- niimath commit: `86d5d715ecd293aadd92c5ab42450ba69a5c15d5`
 - `src/GPL` submodule commit: `0138de44bade572d3d97b3de5a2dd0671d6213c7`
 - emscripten: `emcc 6.0.1`
-- `niimath.wasm` SHA-256: `f45f871344e48cf50cf3cc94810272cd38b2169862b8e4f55ad020d69054d606`
+- `niimath.wasm` SHA-256: `a4022fd47679c9a572389a5a241bb6451786d6521ff3090ab807b8db00b9c50b`
 
 The `GPL=1 make wasm` build is **byte-for-byte deterministic** (verified: two clean
 builds and this vendored copy share the SHA-256 above), so the artifact is fully
