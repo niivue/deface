@@ -14,11 +14,13 @@ export default defineConfig({
   build: {
     target: 'esnext',
   },
-  // Vite's dep prebundler trips on the dynamic-import WASM worker in
-  // @niivue/dcm2niix, so exclude it (keeps the worker a standalone module whose
-  // runtime URL resolves). The GPL niimath is vendored under src/, not a
-  // node_modules dependency, so it isn't prebundled and needs no exclude.
+  // Vite's dev dep-prebundler (esbuild) trips on the `new Worker(new URL(...))`
+  // WASM worker in these packages — it can't resolve the worker module under
+  // .vite/deps. Exclude them so the worker stays a standalone module whose runtime
+  // URL resolves. (Production `vite build` uses Rollup and handles it either way;
+  // this is dev-mode only.) Same reason for both @niivue/dcm2niix and the niimath
+  // GPL build's worker-gpl.js.
   optimizeDeps: {
-    exclude: ['@niivue/dcm2niix'],
+    exclude: ['@niivue/dcm2niix', '@niivue/niimath'],
   },
 })

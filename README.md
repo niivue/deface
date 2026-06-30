@@ -23,7 +23,7 @@ niimath input -robustfov -spm_deface MNI152_T1_2mm mniMask defaced.nii.gz
 
 ## License
 
-**GPL-2.** The `spm_deface` path links the GPL `spm_coreg` module, so this app — and the niimath WASM it vendors in [`src/niimath-gpl/`](src/niimath-gpl/) — is a GPL-2 combined work. (The default `@niivue/niimath` npm package stays BSD; see that directory's README for how the GPL WASM is regenerated.)
+**GPL-2.** The `spm_deface` path links the GPL `spm_coreg` module via the GPL build of niimath (`@niivue/niimath/gpl`), so this app is a GPL-2 combined work. The default `@niivue/niimath` import stays BSD-2-Clause but lacks the SPM operations.
 
 ## Develop
 

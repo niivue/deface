@@ -14,7 +14,7 @@ import NiiVueGPU, {
   SLICE_TYPE,
 } from '@niivue/niivue'
 import { runDcm2niix, traverseDataTransferItems } from './dcm2niix/index'
-import { Niimath } from './niimath-gpl/index'
+import { Niimath } from '@niivue/niimath/gpl'
 import type { MindgrabInferer } from './mindgrab/index'
 
 const T1_URL = `${import.meta.env.BASE_URL}t1_crop.nii.gz`
@@ -78,6 +78,36 @@ let hasDefaced = false
 const niimath = new Niimath()
 let niimathReady: Promise<void> | null = null
 niimath.setOutputDataType('input') // preserve source datatype on save (smaller output)
+
+// Start a niimath chain with the primary input staged under a GENERATED name. The
+// package wrapper stages the primary input under its raw `file.name` (unlike extra
+// files, which get `__nimx…` names), so a source named like a fixed output — e.g.
+// re-dropping a saved `defaced.nii.gz`, or `robustfov.nii.gz` — would share one MEMFS
+// path with the output (fragile in-place overwrite; privacy-sensitive for an
+// anonymizer). The `__nimi_` prefix can't equal any plain output name. Drop this once
+// the package stages the primary input itself.
+const image = (file: File): Chain =>
+  niimath.image(new File([file], `__nimi_${file.name.replace(/[^A-Za-z0-9._-]/g, '_')}`))
+
+// The wrapper exposes file-staging methods for the registration ops (deface/spmDeface/
+// spmcoreg/allineate) but not yet for `-reslice_nn`/`-mul` with a File operand, which
+// the mindgrab masking chain needs. Reach its private `_addFileCommand` (sanitizes +
+// stages the File into MEMFS, emits the argv token). The package is pinned exactly
+// (package.json) while we depend on this private method; assert it exists so a wrapper
+// change fails loudly. Replace with native `.resliceNN()/.mulImage()` once exposed.
+type Chain = ReturnType<typeof niimath.image>
+type FileStager = { _addFileCommand(flag: string, files: File[]): Chain }
+const stage = (flag: string) => (chain: Chain, file: File): Chain => {
+  const proc = chain as unknown as Partial<FileStager>
+  if (typeof proc._addFileCommand !== 'function') {
+    throw new Error(
+      `niimath wrapper changed: private _addFileCommand is gone, so the ${flag} bridge is broken — pin @niivue/niimath or switch to native resliceNN/mulImage.`,
+    )
+  }
+  return proc._addFileCommand(flag, [file])
+}
+const resliceNN = stage('-reslice_nn')
+const mulImage = stage('-mul')
 
 // --- mindgrab (deep-learning brain extraction) ---
 // Lazily loaded on first mindgrab Apply so the ~2500-line generated model + the
@@ -299,14 +329,14 @@ async function runDeface(): Promise<void> {
       // the model expects, which prepareInput's isConformed fast-path then uses directly.
       const srcNative = useRobustfov
         ? new File(
-            [await niimath.image(sourceFile).robustfov().run('robustfov.nii.gz')],
+            [await image(sourceFile).robustfov().run('robustfov.nii.gz')],
             'robustfov.nii.gz',
           )
         : sourceFile
       if (isCleanedUp) return
       const srcModel = useRobustfov
         ? new File(
-            [await niimath.image(srcNative).conform().run('robustfov_conf.nii.gz')],
+            [await image(srcNative).conform().run('robustfov_conf.nii.gz')],
             'robustfov_conf.nii.gz',
           )
         : sourceFile
@@ -319,11 +349,11 @@ async function runDeface(): Promise<void> {
       // (binarize at 1, dilate N mm, erode 0) instead of a plain `-bin`. Two serial niimath
       // runs: the mask is primary for the reslice; srcNative is primary for the multiply so
       // the output keeps its datatype (-odt input).
-      const resliced = niimath.image(maskConf).resliceNN(srcNative)
+      const resliced = resliceNN(image(maskConf), srcNative)
       const grown = borderMm > 0 ? resliced.close(1, borderMm, 0) : resliced.bin()
       const maskNat = new File([await grown.run('masknat.nii.gz')], 'masknat.nii.gz')
       if (isCleanedUp) return
-      const blob = await niimath.image(srcNative).mulImage(maskNat).run('defaced.nii.gz')
+      const blob = await mulImage(image(srcNative), maskNat).run('defaced.nii.gz')
       if (isCleanedUp) return
       await loadFromFile(new File([blob], 'defaced.nii.gz'), false)
       const tag = `${useRobustfov ? 'robustfov + ' : ''}${borderMm > 0 ? `${borderMm} mm border` : 'tight'}`
@@ -357,7 +387,7 @@ async function runDeface(): Promise<void> {
     // -robustfov trims the FOV (neck) for a robust face mask; then register the
     // MNI template to the subject and zero the face voxels. Always run on the
     // pristine sourceFile so repeated Apply doesn't re-crop/re-deface the output.
-    const chain = niimath.image(sourceFile).robustfov()
+    const chain = image(sourceFile).robustfov()
     const defaced =
       method === 'spm_deface'
         ? chain.spmDeface(refFiles.mni, refFiles.mask)
