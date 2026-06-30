@@ -306,9 +306,17 @@ class ImageProcessor {
         }
       };
 
-      const args = [this.file.name, ...this.commands, outName, '-odt', this.outputDataType];
+      // Stage the primary input under a generated internal name (sanitized, extension
+      // preserved) rather than the raw file.name. Otherwise a user file whose name
+      // matches the fixed output (e.g. re-dropping a saved "defaced.nii.gz") makes input
+      // and output share one MEMFS path — fragile in-place overwrite + cleanup. The
+      // `__nimi_` prefix never starts with '-' or '/' and can't collide with outName.
+      // (Mirrors _addFileCommand's staging for template/mask operands.)
+      const inName = `__nimi_${this.file.name.replace(/[^A-Za-z0-9._-]/g, '_')}`;
+      const inputFile = new File([this.file], inName);
+      const args = [inName, ...this.commands, outName, '-odt', this.outputDataType];
       const message: WorkerPostMessage = {
-        blob: this.file,
+        blob: inputFile,
         cmd: args,
         outName: outName,
         extraFiles: this.extraFiles

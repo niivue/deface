@@ -126,11 +126,11 @@ async function resetMaskGpu(): Promise<void> {
   maskDevice = undefined // re-request from getBrainGPUDevice() next time
 }
 
-// Run mindgrab on `src` → a brain mask in conformed (256³) space. Loads `src` onto
-// the canvas (showing it during the slow inference) to get a parsed NVImage for the
-// conform transform. `src` is the effective mindgrab input — either the pristine
-// source or a robustfov-cropped derivative; either way the whole pipeline (conform,
-// infer, reslice, mul) must use the SAME `src` so the mask stays in one space.
+// Run mindgrab on `src` (the MODEL input) → a brain mask in conformed (256³) space.
+// Loads `src` onto the canvas (showing it during the slow inference) to get a parsed
+// NVImage for the conform transform. `src` is the pristine source (conformed here by
+// prepareInput) or, for robustfov, an already-conformed 256³ crop. The caller reslices
+// the returned mask back onto the matching NATIVE-resolution image to keep input res.
 async function makeBrainMask(inferer: MindgrabInferer, src: File): Promise<File> {
   setStatus('Brain extraction (mindgrab)…')
   // Fail closed: clear hasDefaced BEFORE displaying the un-defaced source, so even if
@@ -226,7 +226,25 @@ async function fetchFile(url: string, name: string): Promise<File> {
 // become the pristine input that Apply defaces. The defaced result is displayed
 // with asSource=false so it never replaces the source.
 async function loadFromFile(file: File, asSource = true): Promise<void> {
-  await nv.loadVolumes([{ url: file, name: file.name } as ImageFromUrlOptions])
+  // Fail closed: a source (asSource=true) is un-defaced, so clear Save eligibility
+  // BEFORE the awaitable display — a load rejection after a prior deface must not
+  // leave Save enabled over the un-defaced image (same pattern as makeBrainMask).
+  if (asSource) {
+    hasDefaced = false
+    updateButtons()
+  }
+  try {
+    await nv.loadVolumes([{ url: file, name: file.name } as ImageFromUrlOptions])
+  } catch (err) {
+    // A failed source load can leave the canvas blank/partial. Drop sourceFile so Apply
+    // can't target a stale source that no longer matches the display (display/sourceFile
+    // divergence). Rethrow so enqueue() still reports the failure.
+    if (asSource) {
+      sourceFile = null
+      updateButtons()
+    }
+    throw err
+  }
   if (isCleanedUp) return
   if (asSource) sourceFile = file
   // A freshly loaded source is NOT yet defaced; a deface result (asSource=false) is.
@@ -268,27 +286,44 @@ async function runDeface(): Promise<void> {
       }
       await ensureNiimath()
       if (isCleanedUp) return
-      // The effective mindgrab input: the pristine source, or a robustfov-cropped copy.
-      const src = useRobustfov
+      // mindgrab segments in conformed 256³ 1 mm space, but — like spm_deface/deface —
+      // the output should be at the INPUT resolution (e.g. 0.75 mm), cropped if robustfov
+      // is used. So split the two roles (mirrors brainchop's `-i` inverse):
+      //   srcNative → the reslice/mul target: native resolution (robustfov-cropped if set)
+      //   srcModel  → the model input: must be conformed 256³ 1 mm
+      // For robustfov both derive from one `-robustfov` crop so they share a world frame;
+      // the conformed-space mask then reslices back onto srcNative exactly at native res
+      // (verified). robustfov drops inferior slices, so its crop is no longer 256³ — feeding
+      // it straight to the model would route prepareInput through the niivue conform worker
+      // (which mishandled the cropped geometry); `-conform` restores the exact 256³ canonical
+      // the model expects, which prepareInput's isConformed fast-path then uses directly.
+      const srcNative = useRobustfov
         ? new File(
             [await niimath.image(sourceFile).robustfov().run('robustfov.nii.gz')],
             'robustfov.nii.gz',
           )
         : sourceFile
       if (isCleanedUp) return
-      const maskConf = await makeBrainMask(inferer, src)
+      const srcModel = useRobustfov
+        ? new File(
+            [await niimath.image(srcNative).conform().run('robustfov_conf.nii.gz')],
+            'robustfov_conf.nii.gz',
+          )
+        : sourceFile
       if (isCleanedUp) return
-      // Reslice the conformed brain mask onto `src`'s grid (nearest-neighbour), then
-      // multiply `src` by it so only brain voxels survive — face and skull are zeroed.
-      // For an N mm border, grow the mask with `-close 1 N 0` (binarize at 1, dilate
-      // N mm, erode 0) instead of a plain `-bin`. Two serial niimath runs: the mask is
-      // primary for the reslice; `src` is primary for the multiply so the output keeps
-      // its datatype (-odt input).
-      const resliced = niimath.image(maskConf).resliceNN(src)
+      const maskConf = await makeBrainMask(inferer, srcModel)
+      if (isCleanedUp) return
+      // Reslice the conformed brain mask onto srcNative's grid (nearest-neighbour → back
+      // to native resolution), then multiply srcNative by it so only brain voxels survive
+      // — face and skull are zeroed. For an N mm border, grow the mask with `-close 1 N 0`
+      // (binarize at 1, dilate N mm, erode 0) instead of a plain `-bin`. Two serial niimath
+      // runs: the mask is primary for the reslice; srcNative is primary for the multiply so
+      // the output keeps its datatype (-odt input).
+      const resliced = niimath.image(maskConf).resliceNN(srcNative)
       const grown = borderMm > 0 ? resliced.close(1, borderMm, 0) : resliced.bin()
       const maskNat = new File([await grown.run('masknat.nii.gz')], 'masknat.nii.gz')
       if (isCleanedUp) return
-      const blob = await niimath.image(src).mulImage(maskNat).run('defaced.nii.gz')
+      const blob = await niimath.image(srcNative).mulImage(maskNat).run('defaced.nii.gz')
       if (isCleanedUp) return
       await loadFromFile(new File([blob], 'defaced.nii.gz'), false)
       const tag = `${useRobustfov ? 'robustfov + ' : ''}${borderMm > 0 ? `${borderMm} mm border` : 'tight'}`
@@ -347,8 +382,15 @@ async function runDeface(): Promise<void> {
 
 // --- Save ---
 async function runSave(): Promise<void> {
-  if (nv.volumes.length === 0) return
-  await nv.saveVolume({ filename: 'defaced.nii.gz', volumeByIndex: 0 })
+  // Runtime guard, not just the disabled button: never serialize the un-defaced
+  // source (privacy), and don't race an in-flight run. Surface failures via status
+  // rather than dropping the promise at the listener (() => void runSave()).
+  if (!hasDefaced || isBusy() || nv.volumes.length === 0) return
+  try {
+    await nv.saveVolume({ filename: 'defaced.nii.gz', volumeByIndex: 0 })
+  } catch (err) {
+    setStatus(`Save failed: ${err instanceof Error ? err.message : String(err)}`)
+  }
 }
 
 // --- DICOM / file drag-drop ---
@@ -406,7 +448,28 @@ async function handleDrop(filesPromise: Promise<File[]>): Promise<void> {
 
 // --- Init ---
 async function init(): Promise<void> {
-  await attachNiiVue() // safe now that navigator.gpu is confirmed
+  // NiiVue's attachTo() acquires a WebGPU device and throws without one. But
+  // navigator.gpu can exist while requestAdapter() returns null, device creation
+  // fails, or the GPU is blocklisted — so guard the fast case AND catch attachTo()
+  // failures, giving a friendly message instead of an unhandled console.error in
+  // every WebGPU-unavailable path. (mindgrab's stricter shader-f16 requirement is a
+  // separate gate via #webgpuDialog.)
+  const noWebGpu =
+    'This browser/GPU can’t initialize WebGPU — deface needs a recent desktop Chrome, Edge, or Safari.'
+  if (!navigator.gpu) {
+    setStatus(noWebGpu)
+    return
+  }
+  try {
+    await attachNiiVue()
+  } catch (err) {
+    // Almost always genuine WebGPU unavailability; warn (not error, so the smoke's
+    // console.error gate stays meaningful) so a non-WebGPU init bug isn't silently
+    // mislabeled. Either way return fail-closed: sourceFile/refFiles stay unset.
+    console.warn('deface: WebGPU init failed', err)
+    setStatus(noWebGpu)
+    return
+  }
   setStatus('Loading default image + MNI template…')
   // Fetch the bundled template/mask once; load the default subject.
   const [mni, mask] = await Promise.all([
