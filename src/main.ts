@@ -3,8 +3,11 @@
  * in the browser. No data leaves the machine.
  *
  * Pipeline: load a NIfTI (or DICOM folder via dcm2niix) → run niimath
- * `-robustfov -spm_deface` (SPM rigid, GPL) or `-robustfov -deface` (AFNI
- * affine, BSD) with a bundled MNI template + face mask → show + save the result.
+ * `-deface` (AFNI-style affine registration of a bundled MNI template + face
+ * mask, all BSD) → show + save the result. The default uses niimath's fast
+ * registration engine (`-cost` implicit fast, Hellinger fallback); a slower,
+ * exhaustive Hellinger variant is offered as `-cost hel`. All niimath I/O is
+ * uncompressed (`-gz 0`) for speed — NiiVue re-gzips on Save.
  */
 
 import NiiVueGPU, {
@@ -14,7 +17,7 @@ import NiiVueGPU, {
   SLICE_TYPE,
 } from '@niivue/niivue'
 import { runDcm2niix, traverseDataTransferItems } from './dcm2niix/index'
-import { Niimath } from '@niivue/niimath/gpl'
+import { Niimath } from './niimath'
 import type { MindgrabInferer } from './mindgrab/index'
 
 const T1_URL = `${import.meta.env.BASE_URL}t1_crop.nii.gz`
@@ -79,35 +82,6 @@ const niimath = new Niimath()
 let niimathReady: Promise<void> | null = null
 niimath.setOutputDataType('input') // preserve source datatype on save (smaller output)
 
-// Start a niimath chain with the primary input staged under a GENERATED name. The
-// package wrapper stages the primary input under its raw `file.name` (unlike extra
-// files, which get `__nimx…` names), so a source named like a fixed output — e.g.
-// re-dropping a saved `defaced.nii.gz`, or `robustfov.nii.gz` — would share one MEMFS
-// path with the output (fragile in-place overwrite; privacy-sensitive for an
-// anonymizer). The `__nimi_` prefix can't equal any plain output name. Drop this once
-// the package stages the primary input itself.
-const image = (file: File): Chain =>
-  niimath.image(new File([file], `__nimi_${file.name.replace(/[^A-Za-z0-9._-]/g, '_')}`))
-
-// The wrapper exposes file-staging methods for the registration ops (deface/spmDeface/
-// spmcoreg/allineate) but not yet for `-reslice_nn`/`-mul` with a File operand, which
-// the mindgrab masking chain needs. Reach its private `_addFileCommand` (sanitizes +
-// stages the File into MEMFS, emits the argv token). The package is pinned exactly
-// (package.json) while we depend on this private method; assert it exists so a wrapper
-// change fails loudly. Replace with native `.resliceNN()/.mulImage()` once exposed.
-type Chain = ReturnType<typeof niimath.image>
-type FileStager = { _addFileCommand(flag: string, files: File[]): Chain }
-const stage = (flag: string) => (chain: Chain, file: File): Chain => {
-  const proc = chain as unknown as Partial<FileStager>
-  if (typeof proc._addFileCommand !== 'function') {
-    throw new Error(
-      `niimath wrapper changed: private _addFileCommand is gone, so the ${flag} bridge is broken — pin @niivue/niimath or switch to native resliceNN/mulImage.`,
-    )
-  }
-  return proc._addFileCommand(flag, [file])
-}
-const resliceNN = stage('-reslice_nn')
-const mulImage = stage('-mul')
 
 // --- mindgrab (deep-learning brain extraction) ---
 // Lazily loaded on first mindgrab Apply so the ~2500-line generated model + the
@@ -285,7 +259,7 @@ async function loadFromFile(file: File, asSource = true): Promise<void> {
 // --- Deface ---
 async function runDeface(): Promise<void> {
   if (!sourceFile || !refFiles) return
-  const method = methodSelect.value // spm_deface | deface | mindgrab[_robust][8]
+  const method = methodSelect.value // allineate | allineate_robustfov | allineate_hel | mindgrab[_robust][8]
 
   // mindgrab needs WebGPU + shader-f16; if unavailable, explain rather than fail.
   if (method.startsWith('mindgrab')) {
@@ -311,12 +285,12 @@ async function runDeface(): Promise<void> {
       const inferer = await getMaskInferer()
       if (!inferer) {
         webgpuDialog.showModal()
-        setStatus('mindgrab needs WebGPU (shader-f16) — try spm_deface or deface.')
+        setStatus('mindgrab needs WebGPU (shader-f16) — try an allineate method.')
         return
       }
       await ensureNiimath()
       if (isCleanedUp) return
-      // mindgrab segments in conformed 256³ 1 mm space, but — like spm_deface/deface —
+      // mindgrab segments in conformed 256³ 1 mm space, but — like the allineate deface —
       // the output should be at the INPUT resolution (e.g. 0.75 mm), cropped if robustfov
       // is used. So split the two roles (mirrors brainchop's `-i` inverse):
       //   srcNative → the reslice/mul target: native resolution (robustfov-cropped if set)
@@ -327,17 +301,19 @@ async function runDeface(): Promise<void> {
       // it straight to the model would route prepareInput through the niivue conform worker
       // (which mishandled the cropped geometry); `-conform` restores the exact 256³ canonical
       // the model expects, which prepareInput's isConformed fast-path then uses directly.
+      // gz(0): niimath reads/writes uncompressed .nii (no per-run gzip/gunzip) — faster
+      // round trips. The blobs stay in-memory (NiiVue re-gzips only the final Save).
       const srcNative = useRobustfov
         ? new File(
-            [await image(sourceFile).robustfov().run('robustfov.nii.gz')],
-            'robustfov.nii.gz',
+            [await niimath.image(sourceFile).gz(0).robustfov().run('robustfov.nii')],
+            'robustfov.nii',
           )
         : sourceFile
       if (isCleanedUp) return
       const srcModel = useRobustfov
         ? new File(
-            [await image(srcNative).conform().run('robustfov_conf.nii.gz')],
-            'robustfov_conf.nii.gz',
+            [await niimath.image(srcNative).gz(0).conform().run('robustfov_conf.nii')],
+            'robustfov_conf.nii',
           )
         : sourceFile
       if (isCleanedUp) return
@@ -349,13 +325,13 @@ async function runDeface(): Promise<void> {
       // (binarize at 1, dilate N mm, erode 0) instead of a plain `-bin`. Two serial niimath
       // runs: the mask is primary for the reslice; srcNative is primary for the multiply so
       // the output keeps its datatype (-odt input).
-      const resliced = resliceNN(image(maskConf), srcNative)
+      const resliced = niimath.image(maskConf).gz(0).resliceNN(srcNative)
       const grown = borderMm > 0 ? resliced.close(1, borderMm, 0) : resliced.bin()
-      const maskNat = new File([await grown.run('masknat.nii.gz')], 'masknat.nii.gz')
+      const maskNat = new File([await grown.run('masknat.nii')], 'masknat.nii')
       if (isCleanedUp) return
-      const blob = await mulImage(image(srcNative), maskNat).run('defaced.nii.gz')
+      const blob = await niimath.image(srcNative).gz(0).mulImage(maskNat).run('defaced.nii')
       if (isCleanedUp) return
-      await loadFromFile(new File([blob], 'defaced.nii.gz'), false)
+      await loadFromFile(new File([blob], 'defaced.nii'), false)
       const tag = `${useRobustfov ? 'robustfov + ' : ''}${borderMm > 0 ? `${borderMm} mm border` : 'tight'}`
       setStatus(`Brain-extracted with mindgrab (${tag}) (${Math.round(performance.now() - t0)} ms)`)
     } catch (err) {
@@ -372,32 +348,37 @@ async function runDeface(): Promise<void> {
     return
   }
 
+  // Two orthogonal knobs in the method slug: `_robustfov` crops (neck/inferior) first,
+  // `_hel` picks the exhaustive Hellinger engine (`-cost hel`) over the fast default.
+  // Anchor `_hel` (not `hel`) so a slug like `allineate_shell` can't misroute.
+  const useRobustfov = method.includes('robustfov')
+  const useHel = method.includes('_hel')
+  const label = `allineate (${useHel ? 'Hellinger' : 'fast'}${useRobustfov ? ', robustfov' : ''})`
   spin(true)
-  // Single-threaded WASM: SPM rigid coreg is ~5 s; the affine -deface path is
-  // markedly slower (~20 s on the default image), so set expectations per method.
+  // Hellinger is single-threaded in WASM (no OpenMP) and runs an exhaustive search, so it
+  // is minutes on a full-head scan; set the expectation so a slow run doesn't look hung.
   setStatus(
-    method === 'spm_deface'
-      ? 'Defacing with spm_deface… (rigid ~5 s)'
-      : 'Defacing with deface (affine ~20 s)…',
+    `Defacing with ${label}… (${useHel ? 'Hellinger, single-threaded — up to a few minutes' : 'fast ~5 s'})`,
   )
   const t0 = performance.now()
   try {
     await ensureNiimath()
     if (isCleanedUp) return
-    // -robustfov trims the FOV (neck) for a robust face mask; then register the
-    // MNI template to the subject and zero the face voxels. Always run on the
-    // pristine sourceFile so repeated Apply doesn't re-crop/re-deface the output.
-    const chain = image(sourceFile).robustfov()
-    const defaced =
-      method === 'spm_deface'
-        ? chain.spmDeface(refFiles.mni, refFiles.mask)
-        : chain.deface(refFiles.mni, refFiles.mask)
-    const blob = await defaced.run('defaced.nii.gz')
+    // Register the bundled MNI template to the subject and zero the face voxels.
+    // Always run on the pristine sourceFile so repeated Apply doesn't re-deface an
+    // already-cropped/defaced output. gz(0): uncompressed .nii I/O for speed (NiiVue
+    // re-gzips only on Save). `-cost hel` picks the exhaustive engine; omitting -cost
+    // uses the fast default (with Hellinger fallback on degenerate inputs).
+    const base = niimath.image(sourceFile).gz(0)
+    const chain = useRobustfov ? base.robustfov() : base
+    const opts = useHel ? ['-cost', 'hel'] : []
+    const defaced = chain.deface(refFiles.mni, refFiles.mask, opts)
+    const blob = await defaced.run('defaced.nii')
     if (isCleanedUp) return
-    const out = new File([blob], 'defaced.nii.gz')
+    const out = new File([blob], 'defaced.nii')
     await loadFromFile(out, false) // display result; keep sourceFile pristine
     const ms = Math.round(performance.now() - t0)
-    setStatus(`Defaced with ${method} (${ms} ms)`)
+    setStatus(`Defaced with ${label} (${ms} ms)`)
   } catch (err) {
     // A failed/OOM run can leave the worker's WASM heap + MEMFS corrupt; recreate
     // it before the next Apply so a retry starts clean. Rethrow so enqueue() still
@@ -544,7 +525,10 @@ async function cleanup(): Promise<void> {
   if (isCleanedUp) return
   isCleanedUp = true
   listeners.abort()
-  await pending
+  // Terminate the niimath worker FIRST (don't await `pending`): an in-flight run is one
+  // uninterruptible WASM call — a Hellinger fit would stall teardown for minutes. The
+  // terminated run never resolves, so we deliberately drop the await; any run that already
+  // resolved hits `if (isCleanedUp) return` before touching nv/ctx.
   try {
     ;(niimath as unknown as { worker?: Worker }).worker?.terminate()
   } catch {

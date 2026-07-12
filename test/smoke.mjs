@@ -4,11 +4,11 @@
 // with WebGPU via SwiftShader (the recipe niivue's own e2e suite uses:
 // --use-gl=angle --enable-unsafe-swiftshader), and asserts the full path that
 // node smoke can't reach: WebGPU/NiiVue attach, Vite worker URLs, the default
-// image load, Apply (spm_deface, and -deface with SMOKE_FULL=1), Save→download,
-// and that nothing throws to the page / logs to console.error.
+// image load, Apply (allineate fast, and allineate Hellinger with SMOKE_FULL=1),
+// Save→download, and that nothing throws to the page / logs to console.error.
 //
-// Usage:  npm run build && npm run test:e2e        (spm_deface only, ~fast)
-//         SMOKE_FULL=1 npm run test:e2e            (also the slow affine -deface)
+// Usage:  npm run build && npm run test:e2e        (allineate fast only, ~fast)
+//         SMOKE_FULL=1 npm run test:e2e            (also the slow Hellinger path)
 import { chromium } from 'playwright'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -37,6 +37,7 @@ const cleanup = () => {
 }
 process.on('exit', cleanup)
 process.on('SIGINT', () => { cleanup(); process.exit(130) })
+process.on('SIGTERM', () => { cleanup(); process.exit(143) })
 
 // --strictPort makes vite exit non-zero on a port clash; catch that so the test
 // fails fast instead of polling a port served by some other (stale) process.
@@ -52,10 +53,23 @@ async function waitForServer(timeoutMs = 15000) {
     if (previewExited) {
       throw new Error(`vite preview exited (code ${previewExitCode}) before ready — port ${PORT} clash?`)
     }
+    let ok = false
     try {
-      const res = await fetch(URL)
-      if (res.ok) return
+      ok = (await fetch(URL)).ok
     } catch { /* not up yet */ }
+    if (ok) {
+      // The port answered — but confirm it's OUR preview, not a STALE server that won the
+      // port and forced our --strictPort child to exit (which would silently validate a
+      // stale build). A strictPort bind failure exits the child within a few hundred ms,
+      // so settle briefly and re-check before trusting the server.
+      await wait(500)
+      if (previewExited) {
+        throw new Error(
+          `port ${PORT} is served by another process — our --strictPort preview exited (code ${previewExitCode}); refusing to test a stale server`,
+        )
+      }
+      return
+    }
     await wait(300)
   }
   throw new Error('vite preview did not come up')
@@ -109,13 +123,15 @@ try {
   if (!(await page.isDisabled('#saveBtn'))) await fail('Save enabled before any deface (M2 privacy footgun)', page)
   console.log('✓ App initialized (NiiVue attached, default image + refs loaded), Save correctly disabled pre-deface')
 
-  // 3. Apply spm_deface
-  await page.selectOption('#methodSelect', 'spm_deface')
+  // 3. Apply the default allineate (fast) deface — fast engine, no WebGPU needed. The
+  // four allineate variants are two shared flags (crop / cost), not separate code paths,
+  // so the default path exercises the wiring; robustfov/Hellinger differ only in argv.
+  await page.selectOption('#methodSelect', 'allineate')
   await page.click('#applyBtn')
-  await waitStatus(page, 'Defaced with spm_deface', 120000)
-    .catch(() => fail('spm_deface did not complete', page))
-  await page.screenshot({ path: join(here, 'smoke-spm_deface.png') })
-  console.log('✓ spm_deface ran and displayed')
+  await waitStatus(page, 'Defaced with allineate (fast)', 120000)
+    .catch(() => fail('allineate (fast) did not complete', page))
+  await page.screenshot({ path: join(here, 'smoke-allineate-fast.png') })
+  console.log('✓ allineate (fast) ran and displayed')
 
   // 4. Save → must produce a browser download (Save is gated on a completed deface,
   // so by here it is enabled). Fatal: a broken Save must fail the smoke.
@@ -146,44 +162,22 @@ try {
   console.log(usedDialog ? '✓ mindgrab gated on missing WebGPU/f16 (dialog shown)' : '✓ mindgrab ran and displayed')
   if (usedDialog) {
     await page.click('#webgpuDialog button') // dismiss so it doesn't mask later checks
-  } else {
-    // GPU path available: also exercise the 8 mm border variant (the `-close 1 8 0`
-    // grow path, distinct niimath op from the tight mask's `-bin`).
-    await page.selectOption('#methodSelect', 'mindgrab8')
-    await page.click('#applyBtn')
-    await waitStatus(page, 'Brain-extracted with mindgrab (8 mm border)', 120000)
-      .catch(() => fail('mindgrab 8mm border did not complete', page))
-    await page.screenshot({ path: join(here, 'smoke-mindgrab8.png') })
-    console.log('✓ mindgrab 8mm border ran and displayed')
-
-    // …the tight robustfov variant: whole pipeline on a robustfov-cropped copy,
-    // no border grow (covers the robustfov + `-bin` combination).
-    await page.selectOption('#methodSelect', 'mindgrab_robust')
-    await page.click('#applyBtn')
-    await waitStatus(page, 'Brain-extracted with mindgrab (robustfov + tight)', 120000)
-      .catch(() => fail('mindgrab robustfov (tight) did not complete', page))
-    console.log('✓ mindgrab robustfov (tight) ran and displayed')
-
-    // …and the robustfov + 8 mm variant: the whole pipeline runs on a niimath
-    // robustfov-cropped copy (single coordinate space), then the 8 mm grow.
-    await page.selectOption('#methodSelect', 'mindgrab_robust8')
-    await page.click('#applyBtn')
-    await waitStatus(page, 'Brain-extracted with mindgrab (robustfov + 8 mm border)', 120000)
-      .catch(() => fail('mindgrab robustfov + 8mm did not complete', page))
-    await page.screenshot({ path: join(here, 'smoke-mindgrab-robust8.png') })
-    console.log('✓ mindgrab robustfov + 8mm ran and displayed')
   }
+  // The mindgrab border/robustfov variants differ only by argv flags (`-close 1 8 0` vs
+  // `-bin`, and an upstream `-robustfov` crop) — that morphology/crop behavior is niimath's
+  // to test. One mindgrab outcome (inference or the capability dialog) covers the app wiring.
 
-  // 5. (optional) the slow affine path
+  // 5. (optional) the slow exhaustive Hellinger path (`-cost hel`). Single-threaded WASM,
+  // minutes on a full-head scan — hence gated behind SMOKE_FULL.
   if (FULL) {
-    await page.selectOption('#methodSelect', 'deface')
+    await page.selectOption('#methodSelect', 'allineate_hel')
     await page.click('#applyBtn')
-    await waitStatus(page, 'Defaced with deface', 180000)
-      .catch(() => fail('-deface (affine) did not complete', page))
-    await page.screenshot({ path: join(here, 'smoke-deface.png') })
-    console.log('✓ deface (affine) ran and displayed')
+    await waitStatus(page, 'Defaced with allineate (Hellinger)', 300000)
+      .catch(() => fail('allineate (Hellinger) did not complete', page))
+    await page.screenshot({ path: join(here, 'smoke-allineate-hel.png') })
+    console.log('✓ allineate (Hellinger) ran and displayed')
   } else {
-    console.log('• skipped slow -deface path (set SMOKE_FULL=1 to include)')
+    console.log('• skipped slow Hellinger path (set SMOKE_FULL=1 to include)')
   }
 
   // 6. Fatal on any uncaught page error OR console.error. The app is expected to

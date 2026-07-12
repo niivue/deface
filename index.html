@@ -14,9 +14,11 @@
   <header>
     <div class="row">
       <label for="methodSelect">Method</label>
-      <select id="methodSelect" title="SPM rigid coregistration (GPL), AFNI 3dAllineate affine (BSD), or MindGrab brain extraction (WebGPU)">
-        <option value="spm_deface">spm_deface (SPM rigid)</option>
-        <option value="deface" selected>deface (allineate affine)</option>
+      <select id="methodSelect" title="niimath affine defacing (BSD allineate: fast or Hellinger engine) or MindGrab brain extraction (WebGPU)">
+        <option value="allineate" selected>allineate (fast)</option>
+        <option value="allineate_robustfov">allineate (fast, robustfov)</option>
+        <option value="allineate_hel">allineate (Hellinger)</option>
+        <option value="allineate_hel_robustfov">allineate (Hellinger, robustfov)</option>
         <option value="mindgrab">mindgrab (WebGPU)</option>
         <option value="mindgrab_robust">mindgrab robustfov (WebGPU)</option>
         <option value="mindgrab8">mindgrab 8mm border (WebGPU)</option>
@@ -55,14 +57,15 @@
         <strong>No data is sent to any server.</strong>
       </p>
       <p>Defacing runs <a href="https://github.com/rordenlab/niimath" target="_blank" rel="noopener">niimath</a>,
-        which implements two registration backends:</p>
+        which registers a bundled MNI template (affine, BSD) and zeros the face voxels:</p>
       <ul>
-        <li><strong>spm_deface</strong> — SPM rigid-body coregistration
-          (<a href="https://www.fil.ion.ucl.ac.uk/spm/docs/tutorials/fmri/block/preprocessing/coregistration/"
-            target="_blank" rel="noopener">spm_coreg</a>, J. Ashburner / Wellcome Centre)</li>
-        <li><strong>deface</strong> — affine registration
-          (<a href="https://afni.nimh.nih.gov/pub/dist/doc/program_help/3dAllineate.html" target="_blank"
-            rel="noopener">3dAllineate</a>, RW Cox / AFNI)</li>
+        <li><strong>allineate (fast)</strong> — fast affine registration engine (Hellinger MI,
+          with a robust Hellinger fallback) — the default</li>
+        <li><strong>allineate (fast, robustfov)</strong> — same fast engine after a
+          <code>-robustfov</code> crop of the neck/inferior slices for a tighter face mask</li>
+        <li><strong>allineate (Hellinger)</strong> — the exhaustive Hellinger engine
+          (<code>-cost hel</code>): slower, reference-quality fit (also offered with a
+          <code>-robustfov</code> crop)</li>
         <li><strong>mindgrab</strong> — deep-learning brain extraction (skull-strip): a
           <a href="https://github.com/neuroneural/brainchop" target="_blank" rel="noopener">brainchop</a>-style
           model runs entirely on the GPU (<strong>WebGPU, shader-f16</strong>) to mask out everything but the brain</li>
@@ -70,12 +73,11 @@
       <p>Visualization uses <a href="https://niivue.com/" target="_blank" rel="noopener">NiiVue</a>;
         DICOM import uses <a href="https://github.com/rordenlab/dcm2niix" target="_blank" rel="noopener">dcm2niix</a>.
       </p>
-      <p><small>Because the SPM <code>spm_deface</code> path links the GPL <code>spm_coreg</code> module, this app is
-        licensed <strong>GPL-2</strong>. Requires a browser with WebGPU (recent desktop Chrome, Edge, or Safari).</small>
-      </p>
-      <p><small>Defacing uses the GPL build of
+      <p><small>Defacing uses the BSD-2 build of
         <a href="https://github.com/rordenlab/niimath" target="_blank" rel="noopener">niimath</a>
-        (<code>@niivue/niimath/gpl</code>) · thread-deterministic registration, fails closed on out-of-memory.</small></p>
+        (<code>@niivue/niimath</code>), so this app is licensed <strong>BSD-2-Clause</strong> ·
+        thread-deterministic registration, fails closed on out-of-memory. Requires a browser with
+        WebGPU (recent desktop Chrome, Edge, or Safari).</small></p>
       <button autofocus id="closeAboutBtn" value="default">Close</button>
     </form>
   </dialog>
@@ -86,7 +88,7 @@
       <p>The <strong>mindgrab</strong> brain-extraction method runs a neural network on the GPU and needs
         <strong>WebGPU with the <code>shader-f16</code> feature</strong> (recent desktop Chrome, Edge, or Safari).
         This browser doesn't provide it.</p>
-      <p>Use <strong>spm_deface</strong> or <strong>deface</strong> instead — they run in WebAssembly and need no WebGPU.</p>
+      <p>Use an <strong>allineate</strong> method instead — they run in WebAssembly and need no WebGPU.</p>
       <button autofocus value="default">Close</button>
     </form>
   </dialog>
