@@ -21,10 +21,10 @@
         <option value="allineate_robustfov">allineate (fast, robustfov)</option>
         <option value="allineate_hel">allineate (Hellinger)</option>
         <option value="allineate_hel_robustfov">allineate (Hellinger, robustfov)</option>
-        <option value="reface">reface</option>
-        <option value="reface_robustfov">reface (robustfov)</option>
-        <option value="rescalp">rescalp</option>
-        <option value="rescalp_robustfov">rescalp (robustfov)</option>
+        <option value="reface">reface (T1 only)</option>
+        <option value="reface_robustfov">reface (robustfov, T1 only)</option>
+        <option value="rescalp">rescalp (T1 only)</option>
+        <option value="rescalp_robustfov">rescalp (robustfov, T1 only)</option>
         <option value="mindgrab">mindgrab (WebGPU)</option>
         <option value="mindgrab_robust">mindgrab robustfov (WebGPU)</option>
         <option value="mindgrab8">mindgrab 8mm border (WebGPU)</option>
@@ -78,7 +78,11 @@
           template-space shell is back-projected onto the original grid. <strong>reface</strong>
           replaces the face; <strong>rescalp</strong> replaces the whole scalp. Both are also
           offered with a <code>-robustfov</code> crop (which only tightens the registration —
-          the output keeps the input's full extent)</li>
+          the output keeps the input's full extent).
+          <strong>T1-weighted images only:</strong> the shell supplies T1-like intensities, so
+          compositing it onto a T2/FLAIR/PD/CT scan yields a surface that does not match the
+          host image — use an <strong>allineate</strong> or <strong>mindgrab</strong> method for
+          those</li>
         <li><strong>mindgrab</strong> — deep-learning brain extraction (skull-strip): a
           <a href="https://github.com/neuroneural/brainchop" target="_blank" rel="noopener">brainchop</a>-style
           model runs entirely on the GPU (<strong>WebGPU, shader-f16</strong>) to mask out everything but the brain</li>
