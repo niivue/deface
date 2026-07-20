@@ -32,6 +32,32 @@ const REFACE_WEIGHT_URL = `${import.meta.env.BASE_URL}MNI152_2009_SSW_weight.nii
 const REFACE_SHELL_URL = `${import.meta.env.BASE_URL}refacer_shell_sym212.nii.gz`
 const RESCALP_SHELL_URL = `${import.meta.env.BASE_URL}refacer_shell_sym211.nii.gz`
 
+// Images offered in the toolbar's "Image" picker, so anonymization can be evaluated on
+// more than the bundled default. The first entry is the local bundled image; the rest
+// stream from the niivue-demo-images repo (CORS-enabled via raw.githubusercontent), so
+// they cost nothing until chosen. Several are full-head scans where defacing actually
+// matters (the bundled default is already cropped).
+type Preset = { value: string; label: string; url: string; name: string }
+const DEMO_BASE = 'https://raw.githubusercontent.com/niivue/niivue-demo-images/main/'
+function demo(path: string): Preset {
+  const name = path.split('/').pop()!
+  return { value: `demo:${path}`, label: name.replace(/\.nii(\.gz)?$/i, ''), url: DEMO_BASE + path, name }
+}
+const IMAGE_PRESETS: Preset[] = [
+  { value: 't1_crop', label: 't1_crop (default)', url: T1_URL, name: 't1_crop.nii.gz' },
+  ...[
+    // (no chris_t1 — it is the same scan as the bundled t1_crop default)
+    'chris_t2.nii.gz',
+    'chris_PD.nii.gz',
+    'CT_Philips.nii.gz',
+    'register/T1_head.nii.gz',
+    'register/T1_head_ext.nii.gz',
+    'register/T2w.nii.gz',
+    'register/FLAIR_2D.nii.gz',
+    'register/T1_ds000031.nii.gz',
+  ].map(demo),
+]
+
 function $<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id)
   if (!el) throw new Error(`Element #${id} not found`)
@@ -48,6 +74,7 @@ const saveBtn = $<HTMLButtonElement>('saveBtn')
 const aboutBtn = $<HTMLButtonElement>('aboutBtn')
 const aboutDialog = $<HTMLDialogElement>('aboutDialog')
 const dicomPick = $<HTMLSelectElement>('dicomPick')
+const imageSelect = $<HTMLSelectElement>('imageSelect')
 const webgpuDialog = $<HTMLDialogElement>('webgpuDialog')
 
 // --- NiiVue setup ---
@@ -183,6 +210,7 @@ function updateButtons(): void {
   const busy = isBusy()
   applyBtn.disabled = busy || !sourceFile || !refFiles
   methodSelect.disabled = busy
+  imageSelect.disabled = busy // swapping the source mid-run would race the queue
   saveBtn.disabled = busy || !hasDefaced
   aboutBtn.disabled = false
 }
@@ -234,6 +262,65 @@ async function fetchFile(url: string, name: string): Promise<File> {
   const res = await fetch(url)
   if (!res.ok) throw new Error(`fetch ${name} failed: ${res.status}`)
   return new File([await res.blob()], name)
+}
+
+// --- Image picker (toolbar) ---
+// Which preset the DISPLAYED source came from, so a failed fetch can restore the picker
+// label instead of leaving it pointing at an image that never loaded.
+const CUSTOM_VALUE = '__custom'
+let imageSelection = IMAGE_PRESETS[0].value
+
+function populateImageSelect(): void {
+  imageSelect.replaceChildren()
+  for (const p of IMAGE_PRESETS) {
+    const opt = document.createElement('option')
+    opt.value = p.value
+    opt.text = p.label
+    imageSelect.appendChild(opt)
+  }
+  // Hidden entry, revealed only once a user drops/converts their own file, so the picker
+  // never claims a preset is displayed when it isn't.
+  const custom = document.createElement('option')
+  custom.value = CUSTOM_VALUE
+  custom.hidden = true
+  imageSelect.appendChild(custom)
+  imageSelect.value = imageSelection
+}
+
+// Point the picker at the "(dropped)" entry when a user-supplied file becomes the source.
+function markCustomImage(name: string): void {
+  const custom = imageSelect.querySelector<HTMLOptionElement>(`option[value="${CUSTOM_VALUE}"]`)
+  if (custom) custom.text = `(dropped) ${name}`
+  imageSelect.value = CUSTOM_VALUE
+  imageSelection = CUSTOM_VALUE
+}
+
+// Load the chosen preset as the new pristine source. loadFromFile(…, true) clears
+// hasDefaced before displaying, so switching images can never leave Save enabled over an
+// un-defaced scan (privacy, fail-closed).
+async function onImagePresetChange(): Promise<void> {
+  const preset = IMAGE_PRESETS.find((p) => p.value === imageSelect.value)
+  if (!preset) return // the hidden "(dropped)" entry — nothing to fetch
+  spin(true)
+  try {
+    setStatus(`Loading ${preset.label}…`)
+    let file: File
+    try {
+      file = await fetchFile(preset.url, preset.name)
+    } catch (err) {
+      // Remote demo images can fail (offline/CORS); the displayed source is unchanged, so
+      // restore the picker to whatever is actually on screen.
+      imageSelect.value = imageSelection
+      throw err
+    }
+    imageSelection = preset.value
+    dcmConverted = []
+    dicomPick.classList.add('hidden')
+    await loadFromFile(file)
+    setStatus(`Loaded ${preset.label} — choose a method and click Apply.`)
+  } finally {
+    spin(false)
+  }
 }
 
 // Fetch the -reface templates on first use and cache them. Kept out of init() so the
@@ -491,6 +578,7 @@ async function handleDrop(filesPromise: Promise<File[]>): Promise<void> {
       dicomPick.classList.add('hidden')
       setStatus(`Loading ${files[0].name}…`)
       await loadFromFile(files[0])
+      markCustomImage(files[0].name)
       return
     }
     setStatus(`Converting ${files.length} file(s) with dcm2niix…`)
@@ -519,6 +607,7 @@ async function handleDrop(filesPromise: Promise<File[]>): Promise<void> {
       setStatus(`dcm2niix: 1 NIfTI in ${ms} ms — loading…`)
     }
     await loadFromFile(niftiFiles[0])
+    markCustomImage(niftiFiles[0].name)
   } finally {
     spin(false)
   }
@@ -579,10 +668,18 @@ dicomPick.addEventListener(
   'change',
   () => {
     const file = dcmConverted[Number(dicomPick.value)]
-    if (file) enqueue(() => loadFromFile(file))
+    if (file) {
+      enqueue(async () => {
+        await loadFromFile(file)
+        markCustomImage(file.name)
+      })
+    }
   },
   ac,
 )
+// Serialized through the same queue as loads/defaces (single-flight), so switching the
+// image can't overlap an in-flight niimath run.
+imageSelect.addEventListener('change', () => enqueue(onImagePresetChange), ac)
 applyBtn.addEventListener('click', () => enqueue(runDeface), ac)
 saveBtn.addEventListener('click', () => void runSave(), ac)
 aboutBtn.addEventListener('click', () => aboutDialog.showModal(), ac)
@@ -641,5 +738,6 @@ window.addEventListener('pagehide', (e) => {
 }, { once: true, signal: listeners.signal })
 if (import.meta.hot) import.meta.hot.dispose(cleanup)
 
+populateImageSelect()
 updateButtons()
 enqueue(init)

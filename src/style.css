@@ -203,3 +203,8 @@ dialog button {
   margin-top: 0.8rem;
   margin-right: 0.5rem;
 }
+
+/* Right-justifies the trailing toolbar control (the About button) within the row. */
+header .row .push-right {
+  margin-left: auto;
+}

@@ -13,6 +13,8 @@
 <body>
   <header>
     <div class="row">
+      <label for="imageSelect">Image</label>
+      <select id="imageSelect" title="Choose a demo image to evaluate"></select>
       <label for="methodSelect">Method</label>
       <select id="methodSelect" title="niimath affine defacing (BSD allineate: fast or Hellinger engine) or MindGrab brain extraction (WebGPU)">
         <option value="allineate" selected>allineate (fast)</option>
@@ -30,7 +32,7 @@
       </select>
       <button id="applyBtn">Apply</button>
       <button disabled id="saveBtn">Save Image</button>
-      <button id="aboutBtn">About</button>
+      <button class="push-right" id="aboutBtn">About</button>
     </div>
   </header>
 

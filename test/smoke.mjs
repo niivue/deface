@@ -123,6 +123,17 @@ try {
   if (!(await page.isDisabled('#saveBtn'))) await fail('Save enabled before any deface (M2 privacy footgun)', page)
   console.log('✓ App initialized (NiiVue attached, default image + refs loaded), Save correctly disabled pre-deface')
 
+  // Image picker is populated and points at the bundled default. Only the presence/wiring
+  // is asserted — actually selecting a remote demo image would make the smoke depend on
+  // raw.githubusercontent.com, which would be flaky offline/in CI.
+  const picker = await page.evaluate(() => {
+    const s = document.getElementById('imageSelect')
+    return s ? { n: s.options.length, value: s.value } : null
+  })
+  if (!picker || picker.n < 2 || picker.value !== 't1_crop')
+    await fail(`image picker not populated/defaulted (${JSON.stringify(picker)})`, page)
+  console.log(`✓ Image picker populated (${picker.n} entries, default "${picker.value}")`)
+
   // 3. Apply the default allineate (fast) deface — fast engine, no WebGPU needed. The
   // four allineate variants are two shared flags (crop / cost), not separate code paths,
   // so the default path exercises the wiring; robustfov/Hellinger differ only in argv.
