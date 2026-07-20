@@ -148,7 +148,7 @@ export interface ImageProcessorMethods {
     tensor_decomp_lower(): this;
     /** truncates the decimal value from floating point value and returns integer value */
     trunc(): this;
-    /** bias field correction (adapted from AFNI 3dUnifize) */
+    /** bias field correction (adapted from AFNI 3dUnifize); optional -GM also scales gray matter */
     unifize(): this;
     /** edge enhancing unsharp mask (sigma in mm, not voxels [1 is typical]; scl is amount [0.5 medium, 1.0 heavy]) */
     unsharp(sigma: string | number, scl: string | number): this;
@@ -176,13 +176,13 @@ export interface ImageProcessorMethods {
     thr(number: string | number): this;
     /** use following percentage (0-100) of ROBUST RANGE to threshold current image (zero anything below the number) */
     thrp(input: string | number): this;
-    /** use following percentage (0-100) of ROBUST RANGE of non-zero voxels and threshold below */
+    /** use following percentage (0-100) of ROBUST RANGE of positive voxels and threshold below */
     thrP(input: string | number): this;
     /** use following number to upper-threshold current image (zero anything above the number) */
     uthr(number: string | number): this;
     /** use following percentage (0-100) of ROBUST RANGE to upper-threshold current image (zero anything above the number) */
     uthrp(input: string | number): this;
-    /** use following percentage (0-100) of ROBUST RANGE of non-zero voxels and threshold above */
+    /** use following percentage (0-100) of ROBUST RANGE of positive voxels and threshold above */
     uthrP(input: string | number): this;
     /** use following percentage (0-100) of ROBUST RANGE to threshold current image (anything below set to this threshold) */
     clamp(input: string | number): this;

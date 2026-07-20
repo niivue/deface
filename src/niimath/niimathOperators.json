@@ -381,7 +381,7 @@
   },
   "unifize": {
     "args": [],
-    "help": "bias field correction (adapted from AFNI 3dUnifize)"
+    "help": "bias field correction (adapted from AFNI 3dUnifize); optional -GM also scales gray matter"
   },
   "unsharp": {
     "args": [
@@ -471,7 +471,7 @@
     "args": [
       "input"
     ],
-    "help": "use following percentage (0-100) of ROBUST RANGE of non-zero voxels and threshold below"
+    "help": "use following percentage (0-100) of ROBUST RANGE of positive voxels and threshold below"
   },
   "uthr": {
     "args": [
@@ -489,7 +489,7 @@
     "args": [
       "input"
     ],
-    "help": "use following percentage (0-100) of ROBUST RANGE of non-zero voxels and threshold above"
+    "help": "use following percentage (0-100) of ROBUST RANGE of positive voxels and threshold above"
   },
   "clamp": {
     "args": [

@@ -18,12 +18,12 @@ export declare const dataTypes: {
  */
 export type WorkerFactory = () => Worker;
 /**
- * Niimath runs one WASM worker per instance. **Single-flight contract:** only one
- * `.run()` may be in flight per `Niimath` instance at a time — `run()` reassigns the
- * worker's single `onmessage` handler, so two overlapping runs on the same instance
- * cross-wire each other's results (the first promise can hang or resolve with the
- * wrong output). Serialize calls (await the previous `run()` before the next), or
- * create a separate `Niimath` instance per concurrent stream.
+ * Niimath runs one WASM worker per instance. **Single-flight contract:** only one `.run()` may
+ * be in flight per `Niimath` instance at a time, and the owner ENFORCES this fail-fast rather than
+ * cross-wiring handlers: a `.run()` before `init()` has resolved (no ready worker yet) rejects
+ * with "Worker not initialized", and a second `.run()` while another is still in flight rejects
+ * with "niimath is busy: await the previous run()…". Serialize calls (await the previous `run()`
+ * before the next), or create a separate `Niimath` instance per concurrent stream.
  *
  * This base class is shared by the BSD and GPL builds; the only difference is the
  * `WorkerFactory` injected via the constructor. Consumers normally use the concrete
@@ -31,6 +31,8 @@ export type WorkerFactory = () => Worker;
  */
 export declare class NiimathBase {
     private worker;
+    private ready;
+    private pendingReject;
     readonly operators: Operators;
     private outputDataType;
     readonly dataTypes: {
@@ -44,17 +46,26 @@ export declare class NiimathBase {
     private readonly workerFactory;
     constructor(operators: Operators, workerFactory: WorkerFactory);
     init(): Promise<boolean>;
+    dispose(reason?: string): void;
+    private _fail;
+    private _handle;
     setOutputDataType(type: DataType): void;
     image(file: File): ImageProcessor;
 }
+interface WorkerHandle {
+    beginRun(reject: (e: Error) => void): Worker;
+    settle(worker: Worker): void;
+    isCurrent(worker: Worker): boolean;
+    fail(worker: Worker, error: Error): void;
+}
 interface ImageProcessorConfig {
-    worker: Worker | null;
+    handle: WorkerHandle;
     file: File;
     operators: Operators;
     outputDataType?: DataType;
 }
 declare class ImageProcessor {
-    private worker;
+    private handle;
     private file;
     private operators;
     private commands;
@@ -62,13 +73,14 @@ declare class ImageProcessor {
     private extraFiles;
     private stagedCounter;
     [key: string]: unknown;
-    constructor({ worker, file, operators, outputDataType }: ImageProcessorConfig);
+    constructor({ handle, file, operators, outputDataType }: ImageProcessorConfig);
     private _addCommand;
     private _addFileCommand;
     deface(tmpl: File, mask: File, opts?: (string | number)[]): this;
     spmDeface(tmpl: File, mask: File, opts?: (string | number)[]): this;
     spmcoreg(ref: File, opts?: (string | number)[]): this;
-    allineate(base: File, opts?: (string | number)[]): this;
+    allineate(base: File, opts?: (string | number)[], weight?: File): this;
+    reface(tmpl: File, shell: File, weight: File, opts?: (string | number)[]): this;
     resliceNN(ref: File): this;
     mulImage(img: File): this;
     private _generateMethods;
@@ -78,7 +90,8 @@ interface FileOperandMethods {
     deface(tmpl: File, mask: File, opts?: (string | number)[]): this;
     spmDeface(tmpl: File, mask: File, opts?: (string | number)[]): this;
     spmcoreg(ref: File, opts?: (string | number)[]): this;
-    allineate(base: File, opts?: (string | number)[]): this;
+    allineate(base: File, opts?: (string | number)[], weight?: File): this;
+    reface(tmpl: File, shell: File, weight: File, opts?: (string | number)[]): this;
     resliceNN(ref: File): this;
     mulImage(img: File): this;
 }

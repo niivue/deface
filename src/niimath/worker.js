@@ -94,9 +94,7 @@ ${detail}` : ""}`);
           if (!out_bin) {
             throw new Error(`niimath completed but output "${outName}" was not found`);
           }
-          const exact = new Uint8Array(out_bin.byteLength);
-          exact.set(out_bin);
-          const outputFile = new Blob([exact.buffer], { type: "application/sla" });
+          const outputFile = new Blob([out_bin], { type: "application/octet-stream" });
           const successMsg = {
             blob: outputFile,
             outName: actualOutName,

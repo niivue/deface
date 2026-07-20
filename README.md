@@ -13,6 +13,12 @@ All processing runs in WebAssembly + WebGPU on your machine so your images are n
   - **allineate (fast, robustfov)** — the fast engine after a `-robustfov` crop
   - **allineate (Hellinger)** — the exhaustive Hellinger engine (`-cost hel`): a reference-quality fit, but single-threaded in WebAssembly it can take a few minutes on a full-head scan (native niimath is ~6× faster via OpenMP threads that WASM lacks)
   - **allineate (Hellinger, robustfov)** — the Hellinger engine after a `-robustfov` crop
+- **niimath `-reface`** — instead of *zeroing* the surface, it composites a **synthetic** one
+  (AFNI `afni_refacer2`-style): the subject is registered to a template and a template-space
+  shell is back-projected onto the original grid, so the head still looks like a head.
+  The shell picks what is replaced — **reface** swaps the face, **rescalp** swaps the whole
+  scalp — each also offered with a **robustfov** crop (which only tightens the registration;
+  the output keeps the input's full extent). Templates load on first use (~10 MB).
 - **[brainchop mindgrab](https://github.com/neuroneural/brainchop)** — an edge-based AI model for omnimodal brain extraction, run entirely on the GPU. It masks out everything but the brain, so it removes the face along with the skull and scalp. Variants combine two knobs — a tight skull-strip vs. an **8mm** tissue margin around the brain, and optional **robustfov** neck/inferior-slice cropping: **mindgrab**, **mindgrab robustfov**, **mindgrab 8mm border**, and **mindgrab robustfov + 8mm**. Requires **WebGPU with `shader-f16`** (recent desktop Chrome, Edge, or Safari).
 - **[NiiVue](https://niivue.com/)** renders the image.
 - **[dcm2niix](https://github.com/rordenlab/dcm2niix)** converts dropped DICOM folders to NIfTI.

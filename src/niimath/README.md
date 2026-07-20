@@ -4,10 +4,11 @@ These are the built artifacts of a **BSD-2-only** WASM build of niimath, vendore
 directly into the app (not an npm dependency) and imported from `src/main.ts` as
 `import { Niimath } from './niimath'`.
 
-Vendored because this build carries niimath's new fast affine `-deface` engine
-(`-cost fast` default with Hellinger fallback; `-cost hel` for the exhaustive engine),
-which is **newer than the npm release** (`@niivue/niimath@1.3.2`, no fast deface).
-**Delete this directory and depend on `@niivue/niimath` from npm once `1.4.0` publishes.**
+Vendored because this build carries niimath features **newer than the npm release**
+(`@niivue/niimath@1.3.2`): the fast affine `-deface` engine (`-cost fast` default with
+Hellinger fallback; `-cost hel` for the exhaustive engine) and `-reface <tmpl> <shell>
+<weight>` (synthetic face/scalp replacement).
+**Delete this directory and depend on `@niivue/niimath` from npm once it publishes.**
 
 ## Files
 
@@ -23,7 +24,9 @@ which is **newer than the npm release** (`@niivue/niimath@1.3.2`, no fast deface
 ## Provenance
 
 - **Source repo:** `rordenlab/niimath` (local: `/Users/chris/src/niimath`)
-- **Built from commit:** `cf2ef5bc46114c1b8350cda8663ab92ffbd6d7c5`
+- **Built from:** the working tree atop commit `2530fe0` — the `-reface` feature
+  (`src/reface.c`, the `-reface` dispatch, and the `reface()` JS binding) was still
+  **uncommitted** at build time. Re-stamp this with a real SHA once niimath commits it.
 - **License:** BSD-2-Clause. The GPL `spm_coreg`/`spm_deface` module is **not** built or
   shipped (no `index-gpl`/`niimath-gpl`/`worker-gpl`/`./gpl`).
 

@@ -25,13 +25,15 @@ Single-page app, no framework. [src/main.ts](src/main.ts) is the whole UI contro
 - **niimath** (the **BSD** build, vendored as local source in [src/niimath/](src/niimath/)) — does the defacing in a WASM worker. See "niimath (the BSD build)".
 - **dcm2niix** ([src/dcm2niix/](src/dcm2niix/)) — converts dropped DICOM folders to NIfTI; drop traversal uses `webkitGetAsEntry()` and stamps `_webkitRelativePath` so dcm2niix groups by series.
 
-Methods, selected by `#methodSelect`. All defacing is `-deface` (affine registration of a bundled MNI template + face mask, **BSD**); the variants differ only by registration engine and an optional FOV crop. All niimath runs pass `.gz(0)` (uncompressed `.nii` I/O — no per-run gzip; NiiVue re-gzips only on Save):
+Methods, selected by `#methodSelect`. All niimath runs pass `.gz(0)` (uncompressed `.nii` I/O — no per-run gzip; NiiVue re-gzips only on Save). The `allineate*` group is `-deface` (affine registration of a bundled MNI template + face mask, **BSD**), differing only by registration engine and an optional FOV crop:
 - `allineate` — fast registration engine (implicit `-cost`; Hellinger MI with a robust Hellinger fallback on degenerate inputs), no crop. **Default.** `image(src).gz(0).deface(mni, mask)`.
 - `allineate_robustfov` — same fast engine after `image(src).gz(0).robustfov()` crops the neck/inferior slices for a tighter face mask.
 - `allineate_hel` — the exhaustive Hellinger engine, `.deface(mni, mask, ['-cost', 'hel'])`; slower (~20 s single-thread WASM), reference-quality fit.
 - `allineate_hel_robustfov` — the Hellinger engine after a `-robustfov` crop.
 
-Engine and crop are orthogonal: `useHel = method.includes('hel')`, `useRobustfov = method.includes('robustfov')`.
+Engine and crop are orthogonal: `useHel = method.includes('_hel')`, `useRobustfov = method.includes('robustfov')`.
+
+- `reface` / `reface_robustfov` / `rescalp` / `rescalp_robustfov` — **replace** the surface with a synthetic one instead of zeroing it: `-reface <tmpl> <shell> <weight>` (`niimath.image(src).gz(0)[.robustfov()].reface(tmpl, shell, weight)`). The **shell** picks what is replaced — `refacer_shell_sym212` = face, `refacer_shell_sym211` = scalp — with `MNI152_2009_SSW` as the template and `MNI152_2009_SSW_weight` as the registration weight. **Gotcha:** unlike `-deface`, reface back-projects onto the **ORIGINAL subject grid**, so `-robustfov` here only tightens the registration — the output keeps the input's full extent (verified: 0.88 mm input → same dims out, with or without the crop). The four templates are ~10 MB, so they are fetched **lazily** on the first reface Apply (`ensureRefaceFiles`), not in `init()`.
 - `mindgrab[_robust][8]` — deep-learning brain extraction (skull-strip), needs **WebGPU + shader-f16**. See "mindgrab". Two orthogonal knobs in the name: `8` keeps an 8 mm tissue shell (brainchop-cli's `-close 1 8 0`, vs. a tight `-bin`); `robust` runs the pipeline on a `-robustfov`-cropped copy (drops neck/inferior slices). → `mindgrab` (tight), `mindgrab_robust`, `mindgrab8`, `mindgrab_robust8`.
 
 ### Concurrency — single-flight (gotcha)

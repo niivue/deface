@@ -19,6 +19,10 @@
         <option value="allineate_robustfov">allineate (fast, robustfov)</option>
         <option value="allineate_hel">allineate (Hellinger)</option>
         <option value="allineate_hel_robustfov">allineate (Hellinger, robustfov)</option>
+        <option value="reface">reface</option>
+        <option value="reface_robustfov">reface (robustfov)</option>
+        <option value="rescalp">rescalp</option>
+        <option value="rescalp_robustfov">rescalp (robustfov)</option>
         <option value="mindgrab">mindgrab (WebGPU)</option>
         <option value="mindgrab_robust">mindgrab robustfov (WebGPU)</option>
         <option value="mindgrab8">mindgrab 8mm border (WebGPU)</option>
@@ -66,6 +70,13 @@
         <li><strong>allineate (Hellinger)</strong> — the exhaustive Hellinger engine
           (<code>-cost hel</code>): slower, reference-quality fit (also offered with a
           <code>-robustfov</code> crop)</li>
+        <li><strong>reface</strong> / <strong>rescalp</strong> — instead of <em>zeroing</em> the face,
+          composite a synthetic surface onto it (<code>-reface</code>, AFNI
+          <code>afni_refacer2</code>-style): the subject is registered to a template and a
+          template-space shell is back-projected onto the original grid. <strong>reface</strong>
+          replaces the face; <strong>rescalp</strong> replaces the whole scalp. Both are also
+          offered with a <code>-robustfov</code> crop (which only tightens the registration —
+          the output keeps the input's full extent)</li>
         <li><strong>mindgrab</strong> — deep-learning brain extraction (skull-strip): a
           <a href="https://github.com/neuroneural/brainchop" target="_blank" rel="noopener">brainchop</a>-style
           model runs entirely on the GPU (<strong>WebGPU, shader-f16</strong>) to mask out everything but the brain</li>

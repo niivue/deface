@@ -382,7 +382,7 @@ var niimathOperators_default = {
   },
   unifize: {
     args: [],
-    help: "bias field correction (adapted from AFNI 3dUnifize)"
+    help: "bias field correction (adapted from AFNI 3dUnifize); optional -GM also scales gray matter"
   },
   unsharp: {
     args: [
@@ -472,7 +472,7 @@ var niimathOperators_default = {
     args: [
       "input"
     ],
-    help: "use following percentage (0-100) of ROBUST RANGE of non-zero voxels and threshold below"
+    help: "use following percentage (0-100) of ROBUST RANGE of positive voxels and threshold below"
   },
   uthr: {
     args: [
@@ -490,7 +490,7 @@ var niimathOperators_default = {
     args: [
       "input"
     ],
-    help: "use following percentage (0-100) of ROBUST RANGE of non-zero voxels and threshold above"
+    help: "use following percentage (0-100) of ROBUST RANGE of positive voxels and threshold above"
   },
   clamp: {
     args: [
@@ -876,24 +876,102 @@ var dataTypes = {
 };
 var NiimathBase = class {
   constructor(operators, workerFactory) {
+    // Single owner of the worker and the one in-flight operation. A worker processes one op at a
+    // time (the API is awaited sequentially) and the owner ENFORCES that — a second concurrent op
+    // is rejected, never silently interleaved. init(), run(), dispose(), and a fatal crash all
+    // funnel through this owner, and every state change is scoped to the worker GENERATION so a
+    // stale message from a replaced/disposed worker can never settle the current one.
     this.worker = null;
+    this.ready = false;
+    // the current worker has sent 'ready' (init resolved) and is usable
+    this.pendingReject = null;
     this.outputDataType = "float";
     this.dataTypes = dataTypes;
     this.operators = operators;
     this.workerFactory = workerFactory;
   }
   init() {
-    this.worker = this.workerFactory();
+    this.dispose("niimath worker replaced by a new init()");
     return new Promise((resolve, reject) => {
-      this.worker.onmessage = (event) => {
+      let worker;
+      try {
+        worker = this.workerFactory();
+      } catch (e) {
+        reject(e instanceof Error ? e : new Error(String(e)));
+        return;
+      }
+      this.worker = worker;
+      this.ready = false;
+      this.pendingReject = reject;
+      worker.onmessage = (event) => {
+        if (this.worker !== worker) return;
         if (event.data && event.data.type === "ready") {
+          this.ready = true;
+          this.pendingReject = null;
           resolve(true);
+        } else if (event.data && event.data.type === "error") {
+          this._fail(worker, new Error(event.data.message || "niimath worker failed to initialize"));
         }
       };
-      this.worker.onerror = (error) => {
-        reject(new Error(`Worker failed to load: ${error.message}`));
+      worker.onerror = (error) => {
+        this._fail(worker, new Error(`Worker failed to load: ${error.message}`));
       };
     });
+  }
+  // Terminate the worker, release its WASM heap, AND reject any in-flight init()/run() so no
+  // caller hangs (Worker.terminate() emits no event). Idempotent: safe before init(), after a
+  // failure, or called repeatedly. A processor created earlier becomes non-runnable after this
+  // (its next run() sees no ready worker and rejects with "not initialized").
+  dispose(reason = "niimath worker disposed") {
+    const worker = this.worker;
+    const reject = this.pendingReject;
+    this.worker = null;
+    this.ready = false;
+    this.pendingReject = null;
+    worker?.terminate();
+    reject?.(new Error(reason));
+  }
+  // Fatal error/crash for `worker`. If it is still the current worker, drop it and reject the
+  // in-flight op (visible to EVERY ImageProcessor, since they all read this single owner); a
+  // stale/superseded worker is just terminated. The one invalidation path for init and run.
+  _fail(worker, error) {
+    if (this.worker === worker) {
+      const reject = this.pendingReject;
+      this.worker = null;
+      this.ready = false;
+      this.pendingReject = null;
+      worker.terminate();
+      reject?.(error);
+    } else {
+      worker.terminate();
+    }
+  }
+  // A capability handle for ImageProcessor: it never holds its own worker reference, so worker
+  // ownership stays with this base. All operations are generation-scoped (worker identity) so a
+  // stale event cannot settle/clobber a newer generation.
+  _handle() {
+    return {
+      // Fail-fast: a run requires a READY, IDLE worker. Throwing here (with NO state mutation on
+      // failure) prevents a pre-ready run, or a second overlapping run, from replacing the
+      // in-flight op's handlers/rejecter. On success it registers `reject` and returns the worker.
+      beginRun: (reject) => {
+        if (this.worker === null || !this.ready) {
+          throw new Error("Worker not initialized. Did you await the init() method?");
+        }
+        if (this.pendingReject !== null) {
+          throw new Error("niimath is busy: await the previous run() before starting another");
+        }
+        this.pendingReject = reject;
+        return this.worker;
+      },
+      // Clear the in-flight op ONLY if `worker` is still current — a late result from a
+      // replaced/disposed worker must not clear the new worker's rejecter.
+      settle: (worker) => {
+        if (this.worker === worker) this.pendingReject = null;
+      },
+      isCurrent: (worker) => this.worker === worker,
+      fail: (worker, error) => this._fail(worker, error)
+    };
   }
   setOutputDataType(type) {
     if (Object.values(this.dataTypes).includes(type)) {
@@ -904,7 +982,7 @@ var NiimathBase = class {
   }
   image(file) {
     return new ImageProcessor({
-      worker: this.worker,
+      handle: this._handle(),
       file,
       operators: this.operators,
       outputDataType: this.outputDataType
@@ -912,14 +990,14 @@ var NiimathBase = class {
   }
 };
 var ImageProcessor = class {
-  constructor({ worker, file, operators, outputDataType }) {
+  constructor({ handle, file, operators, outputDataType }) {
     this.commands = [];
     // Files (besides the main input) staged into MEMFS by name for chain ops that
     // take filename argv tokens (e.g. -deface/-spm_deface template + mask).
     this.extraFiles = [];
     // Monotonic counter for generated staging names (collision-proof argv tokens).
     this.stagedCounter = 0;
-    this.worker = worker;
+    this.handle = handle;
     this.file = file;
     this.operators = operators;
     this.outputDataType = outputDataType ?? "float";
@@ -959,9 +1037,29 @@ var ImageProcessor = class {
   spmcoreg(ref, opts = []) {
     return this._addFileCommand("-spm_coreg", [ref], opts);
   }
-  // Affine registration (BSD allineate): -allineate <base> [opts]
-  allineate(base, opts = []) {
-    return this._addFileCommand("-allineate", [base], opts);
+  // Affine registration (BSD allineate): -allineate <base> [opts] [-weight <img>]
+  // The optional `weight` is a base(fixed)-space GRADED weight image, AFNI 3dAllineate style (its
+  // dims + world frame must match `base`): normalized to [0, 1] (divide by max) and used per base
+  // voxel — a voxel weighted 0 is excluded, one near 1 dominates. It is NOT an exclusion mask; keep
+  // the out-of-ROI head attenuated (nonzero) to anchor global scale (a fully-zeroed exterior lets a
+  // cross-modal fit collapse into the scalp). It steers BOTH engines — the ordinary engine
+  // (`-cost hel`/`lpc`/`lpa`/`ls`) uses it in place of its manufactured autoweight, the fast engine
+  // applies it at the finest 2 mm stage only. It is rejected only with stdin and `-applymat`; when
+  // the default fast engine falls back to the ordinary engine, the weight is still honored.
+  // Emitted as `-weight <img>` after the base + opts and staged
+  // into MEMFS like the other file operands.
+  allineate(base, opts = [], weight) {
+    this._addFileCommand("-allineate", [base], opts);
+    if (weight) this._addFileCommand("-weight", [weight]);
+    return this;
+  }
+  // Anonymization by face replacement (BSD allineate/reface): -reface <tmpl> <shell> <weight> [opts].
+  // Registers the subject to `tmpl`, back-projects the signed template-space `shell` onto the
+  // subject grid, and composites an anonymized image. All three file operands are REQUIRED (the
+  // `weight` is reused as the registration weight); opts are the `-cost` tuning as for `deface`.
+  // For privacy the coverage diagnostic fails closed (<10% mapped → the run errors, no output).
+  reface(tmpl, shell, weight, opts = []) {
+    return this._addFileCommand("-reface", [tmpl, shell, weight], opts);
   }
   // Nearest-neighbour reslice of the current image onto another image's grid:
   // -reslice_nn <ref>. (e.g. bring a conformed-space mask back to a native grid.)
@@ -1044,15 +1142,27 @@ var ImageProcessor = class {
   }
   async run(outName = "output.nii") {
     return new Promise((resolve, reject) => {
-      if (this.worker === null) {
-        reject(new Error("Worker not initialized. Did you await the init() method?"));
+      if (/[/\\]/.test(outName) || outName.split("/").includes("..") || outName.startsWith("__nimi_") || outName.startsWith("__nimx")) {
+        reject(new Error(
+          `invalid output name '${outName}': use a plain basename that does not contain a path separator or start with the reserved __nimi_/__nimx prefix`
+        ));
         return;
       }
-      this.worker.onmessage = (e) => {
+      let worker;
+      try {
+        worker = this.handle.beginRun(reject);
+      } catch (e) {
+        reject(e);
+        return;
+      }
+      worker.onmessage = (e) => {
+        if (!this.handle.isCurrent(worker)) return;
         const data = e.data;
         if (data.type === "error") {
+          this.handle.settle(worker);
           reject(new Error(data.message));
         } else if ("blob" in data && "exitCode" in data) {
+          this.handle.settle(worker);
           const { blob, exitCode } = data;
           if (exitCode === 0) {
             resolve(blob);
@@ -1061,16 +1171,24 @@ var ImageProcessor = class {
           }
         }
       };
-      const inName = `__nimi_${this.file.name.replace(/[^A-Za-z0-9._-]/g, "_")}`;
-      const inputFile = new File([this.file], inName);
-      const args = [inName, ...this.commands, outName, "-odt", this.outputDataType];
-      const message = {
-        blob: inputFile,
-        cmd: args,
-        outName,
-        extraFiles: this.extraFiles
+      worker.onerror = (error) => {
+        this.handle.fail(worker, new Error(`niimath worker crashed during run: ${error.message}`));
       };
-      this.worker.postMessage(message);
+      try {
+        const inName = `__nimi_${this.file.name.replace(/[^A-Za-z0-9._-]/g, "_")}`;
+        const inputFile = new File([this.file], inName);
+        const args = [inName, ...this.commands, outName, "-odt", this.outputDataType];
+        const message = {
+          blob: inputFile,
+          cmd: args,
+          outName,
+          extraFiles: this.extraFiles
+        };
+        worker.postMessage(message);
+      } catch (e) {
+        this.handle.settle(worker);
+        reject(e);
+      }
     });
   }
 };

@@ -141,6 +141,16 @@ try {
   ]).catch(() => fail('Save did not produce a download', page))
   console.log('✓ Save produced a download:', download.suggestedFilename())
 
+  // 4a. reface — a genuinely distinct niimath op (`-reface`, three staged file operands)
+  // plus the lazy ~10 MB template fetch, so it gets its own run. The rescalp/robustfov
+  // variants differ only by which shell file and an argv flag, so one run covers the path.
+  await page.selectOption('#methodSelect', 'reface')
+  await page.click('#applyBtn')
+  await waitStatus(page, 'Refaced with reface', 180000)
+    .catch(() => fail('reface did not complete', page))
+  await page.screenshot({ path: join(here, 'smoke-reface.png') })
+  console.log('✓ reface ran and displayed')
+
   // 4b. mindgrab: needs WebGPU + shader-f16. Headless SwiftShader lacks f16, so the
   // expected outcome here is the graceful "needs WebGPU" dialog (NOT a crash). On a
   // real f16 GPU the run completes instead — accept either, fail only on neither.

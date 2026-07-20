@@ -23,6 +23,14 @@ import type { MindgrabInferer } from './mindgrab/index'
 const T1_URL = `${import.meta.env.BASE_URL}t1_crop.nii.gz`
 const MNI_URL = `${import.meta.env.BASE_URL}avg152T1.nii.gz`
 const MASK_URL = `${import.meta.env.BASE_URL}avg152T1mask.nii.gz`
+// -reface templates: a template to register to, a template-space shell that supplies the
+// synthetic surface, and a registration weight. Two shells: 212 replaces the face, 211
+// the whole scalp. ~10 MB total, so these are fetched lazily on the first reface Apply
+// (see ensureRefaceFiles) rather than at startup.
+const REFACE_TMPL_URL = `${import.meta.env.BASE_URL}MNI152_2009_SSW.nii.gz`
+const REFACE_WEIGHT_URL = `${import.meta.env.BASE_URL}MNI152_2009_SSW_weight.nii.gz`
+const REFACE_SHELL_URL = `${import.meta.env.BASE_URL}refacer_shell_sym212.nii.gz`
+const RESCALP_SHELL_URL = `${import.meta.env.BASE_URL}refacer_shell_sym211.nii.gz`
 
 function $<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id)
@@ -73,6 +81,9 @@ let isCleanedUp = false
 let sourceFile: File | null = null
 // Bundled MNI template + face mask, fetched once and reused for every run.
 let refFiles: { mni: File; mask: File } | null = null
+// -reface templates (template + weight + the two shells), fetched lazily on the first
+// reface/rescalp Apply — ~10 MB that a user who only defaces should never download.
+let refaceFiles: { tmpl: File; weight: File; face: File; scalp: File } | null = null
 // True once the CURRENTLY displayed volume is a defaced result. Save is gated on
 // this so a user can't download the un-defaced source under the name defaced.nii.gz
 // (a privacy footgun for an anonymization tool). Reset when a new source loads.
@@ -225,6 +236,22 @@ async function fetchFile(url: string, name: string): Promise<File> {
   return new File([await res.blob()], name)
 }
 
+// Fetch the -reface templates on first use and cache them. Kept out of init() so the
+// ~10 MB only downloads for users who actually reface/rescalp. Both shells are fetched
+// together so switching between reface and rescalp costs nothing.
+async function ensureRefaceFiles(): Promise<typeof refaceFiles> {
+  if (!refaceFiles) {
+    const [tmpl, weight, face, scalp] = await Promise.all([
+      fetchFile(REFACE_TMPL_URL, 'MNI152_2009_SSW.nii.gz'),
+      fetchFile(REFACE_WEIGHT_URL, 'MNI152_2009_SSW_weight.nii.gz'),
+      fetchFile(REFACE_SHELL_URL, 'refacer_shell_sym212.nii.gz'),
+      fetchFile(RESCALP_SHELL_URL, 'refacer_shell_sym211.nii.gz'),
+    ])
+    refaceFiles = { tmpl, weight, face, scalp }
+  }
+  return refaceFiles
+}
+
 // --- Load ---
 // asSource=true for user-supplied images (default/drop/dcm2niix pick) — these
 // become the pristine input that Apply defaces. The defaced result is displayed
@@ -259,7 +286,47 @@ async function loadFromFile(file: File, asSource = true): Promise<void> {
 // --- Deface ---
 async function runDeface(): Promise<void> {
   if (!sourceFile || !refFiles) return
-  const method = methodSelect.value // allineate | allineate_robustfov | allineate_hel | mindgrab[_robust][8]
+  const method = methodSelect.value // allineate[_robustfov][_hel] | reface|rescalp[_robustfov] | mindgrab[_robust][8]
+
+  // reface/rescalp REPLACE the surface with a synthetic one instead of zeroing it:
+  // `-reface <tmpl> <shell> <weight>` registers the subject to the template, back-projects
+  // the template-space shell, and composites it in. The shell chooses what is replaced —
+  // sym212 = face, sym211 = whole scalp. Unlike `-deface`, reface writes onto the ORIGINAL
+  // subject grid, so `-robustfov` only tightens the registration; output dims are unchanged.
+  if (method.startsWith('reface') || method.startsWith('rescalp')) {
+    const useScalp = method.startsWith('rescalp')
+    const useRobustfov = method.includes('robustfov')
+    const label = `${useScalp ? 'rescalp' : 'reface'}${useRobustfov ? ' (robustfov)' : ''}`
+    spin(true)
+    setStatus(`Loading ${label} templates…`)
+    const t0 = performance.now()
+    try {
+      const rf = await ensureRefaceFiles()
+      if (isCleanedUp || !rf) return
+      await ensureNiimath()
+      if (isCleanedUp) return
+      setStatus(`Refacing with ${label}…`)
+      // Always run on the pristine sourceFile so repeated Apply doesn't re-reface an
+      // already-refaced output. gz(0): uncompressed .nii I/O (NiiVue re-gzips on Save).
+      const base = niimath.image(sourceFile).gz(0)
+      const chain = useRobustfov ? base.robustfov() : base
+      const blob = await chain
+        .reface(rf.tmpl, useScalp ? rf.scalp : rf.face, rf.weight)
+        .run('refaced.nii')
+      if (isCleanedUp) return
+      await loadFromFile(new File([blob], 'refaced.nii'), false) // display; source stays pristine
+      setStatus(`Refaced with ${label} (${Math.round(performance.now() - t0)} ms)`)
+    } catch (err) {
+      // A failed/OOM run can leave the worker's WASM heap + MEMFS corrupt; recreate it
+      // before the next Apply. Rethrow so enqueue() still reports "Failed: …".
+      resetNiimathWorker()
+      throw err
+    } finally {
+      spin(false)
+      updateButtons()
+    }
+    return
+  }
 
   // mindgrab needs WebGPU + shader-f16; if unavailable, explain rather than fail.
   if (method.startsWith('mindgrab')) {
