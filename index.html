@@ -7,19 +7,25 @@
   <!-- empty favicon: suppress the browser's default /favicon.ico request (404) -->
   <link rel="icon" href="data:," />
   <title>browser MRI defacing</title>
-  <script type="module" crossorigin src="/deface/assets/index-B5Uv_PF3.js"></script>
-  <link rel="stylesheet" crossorigin href="/deface/assets/index-7XAWQwqA.css">
+  <script type="module" crossorigin src="/deface/assets/index-BizhoPat.js"></script>
+  <link rel="stylesheet" crossorigin href="/deface/assets/index-ueQ8XPau.css">
 </head>
 
 <body>
   <header>
     <div class="row">
+      <label for="imageSelect">Image</label>
+      <select id="imageSelect" title="Choose a demo image to evaluate"></select>
       <label for="methodSelect">Method</label>
       <select id="methodSelect" title="niimath affine defacing (BSD allineate: fast or Hellinger engine) or MindGrab brain extraction (WebGPU)">
         <option value="allineate" selected>allineate (fast)</option>
         <option value="allineate_robustfov">allineate (fast, robustfov)</option>
         <option value="allineate_hel">allineate (Hellinger)</option>
         <option value="allineate_hel_robustfov">allineate (Hellinger, robustfov)</option>
+        <option value="reface">reface (T1 only)</option>
+        <option value="reface_robustfov">reface (robustfov, T1 only)</option>
+        <option value="rescalp">rescalp (T1 only)</option>
+        <option value="rescalp_robustfov">rescalp (robustfov, T1 only)</option>
         <option value="mindgrab">mindgrab (WebGPU)</option>
         <option value="mindgrab_robust">mindgrab robustfov (WebGPU)</option>
         <option value="mindgrab8">mindgrab 8mm border (WebGPU)</option>
@@ -27,7 +33,7 @@
       </select>
       <button id="applyBtn">Apply</button>
       <button disabled id="saveBtn">Save Image</button>
-      <button id="aboutBtn">About</button>
+      <button class="push-right" id="aboutBtn">About</button>
     </div>
   </header>
 
@@ -67,6 +73,17 @@
         <li><strong>allineate (Hellinger)</strong> — the exhaustive Hellinger engine
           (<code>-cost hel</code>): slower, reference-quality fit (also offered with a
           <code>-robustfov</code> crop)</li>
+        <li><strong>reface</strong> / <strong>rescalp</strong> — instead of <em>zeroing</em> the face,
+          composite a synthetic surface onto it (<code>-reface</code>, AFNI
+          <code>afni_refacer2</code>-style): the subject is registered to a template and a
+          template-space shell is back-projected onto the original grid. <strong>reface</strong>
+          replaces the face; <strong>rescalp</strong> replaces the whole scalp. Both are also
+          offered with a <code>-robustfov</code> crop (which only tightens the registration —
+          the output keeps the input's full extent).
+          <strong>T1-weighted images only:</strong> the shell supplies T1-like intensities, so
+          compositing it onto a T2/FLAIR/PD/CT scan yields a surface that does not match the
+          host image — use an <strong>allineate</strong> or <strong>mindgrab</strong> method for
+          those</li>
         <li><strong>mindgrab</strong> — deep-learning brain extraction (skull-strip): a
           <a href="https://github.com/neuroneural/brainchop" target="_blank" rel="noopener">brainchop</a>-style
           model runs entirely on the GPU (<strong>WebGPU, shader-f16</strong>) to mask out everything but the brain</li>
@@ -76,7 +93,7 @@
       </p>
       <p><small>Defacing uses the BSD-2 build of
         <a href="https://github.com/rordenlab/niimath" target="_blank" rel="noopener">niimath</a>
-        (<code>@niivue/niimath</code>), so this app is licensed <strong>BSD-2-Clause</strong> ·
+        compiled to WebAssembly and bundled with this app, so it is licensed <strong>BSD-2-Clause</strong> ·
         thread-deterministic registration, fails closed on out-of-memory. Requires a browser with
         WebGPU (recent desktop Chrome, Edge, or Safari).</small></p>
       <button autofocus id="closeAboutBtn" value="default">Close</button>
