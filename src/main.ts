@@ -2,12 +2,15 @@
  * deface — remove facial features from a brain MRI for anonymization, entirely
  * in the browser. No data leaves the machine.
  *
- * Pipeline: load a NIfTI (or DICOM folder via dcm2niix) → run niimath
- * `-deface` (AFNI-style affine registration of a bundled MNI template + face
- * mask, all BSD) → show + save the result. The default uses niimath's fast
- * registration engine (`-cost` implicit fast, Hellinger fallback); a slower,
- * exhaustive Hellinger variant is offered as `-cost hel`. All niimath I/O is
- * uncompressed (`-gz 0`) for speed — NiiVue re-gzips on Save.
+ * Pipeline: load a NIfTI (or DICOM folder via dcm2niix, or a demo scan from the
+ * Image picker) → anonymize → show + save the result. Three families of method:
+ *   - `-deface` (BSD, default): affine-register a bundled MNI template + face
+ *     mask and ZERO the face. Fast engine by default; `-cost hel` is the slower
+ *     exhaustive Hellinger fit.
+ *   - `-reface` (T1 only): REPLACE the face/scalp with a synthetic surface
+ *     back-projected from a template-space shell.
+ *   - mindgrab: deep-learning brain extraction on the GPU (needs shader-f16).
+ * All niimath I/O is uncompressed (`-gz 0`) for speed — NiiVue re-gzips on Save.
  */
 
 import NiiVueGPU, {
@@ -120,7 +123,6 @@ const niimath = new Niimath()
 let niimathReady: Promise<void> | null = null
 niimath.setOutputDataType('input') // preserve source datatype on save (smaller output)
 
-
 // --- mindgrab (deep-learning brain extraction) ---
 // Lazily loaded on first mindgrab Apply so the ~2500-line generated model + the
 // conform worker stay out of the initial bundle. mindgrab needs WebGPU with
@@ -228,6 +230,7 @@ function enqueue(fn: () => Promise<unknown>): void {
   pending = pending
     .then(fn)
     .catch((err: unknown) => {
+      if (isCleanedUp) return
       const msg = err instanceof Error ? err.message : String(err)
       setStatus(`Failed: ${msg}`)
       console.error('deface task failed', err)
@@ -245,13 +248,11 @@ async function ensureNiimath(): Promise<void> {
 
 // After a failed/aborted niimath run (incl. OOM, which the WASM allocators bail on
 // via longjmp), the worker's WASM heap and Emscripten MEMFS may be in an undefined
-// state. Tear the worker down and clear niimathReady so the next run spins up a
-// fresh one rather than reusing leaked/stale state. (Uses the same field access as
-// cleanup(); the vendored wrapper exposes no public terminate.)
+// state. Dispose the worker and clear niimathReady so the next run spins up a
+// fresh one rather than reusing leaked/stale state.
 function resetNiimathWorker(): void {
   try {
-    ;(niimath as unknown as { worker?: Worker }).worker?.terminate()
-    ;(niimath as unknown as { worker: Worker | null }).worker = null
+    niimath.dispose('niimath worker reset after a failed run')
   } catch {
     // worker may already be gone
   }
@@ -307,16 +308,16 @@ async function onImagePresetChange(): Promise<void> {
     let file: File
     try {
       file = await fetchFile(preset.url, preset.name)
+      await loadFromFile(file)
     } catch (err) {
-      // Remote demo images can fail (offline/CORS); the displayed source is unchanged, so
-      // restore the picker to whatever is actually on screen.
+      // Fetching or parsing a remote demo can fail; restore the picker to the last source
+      // that loaded successfully.
       imageSelect.value = imageSelection
       throw err
     }
     imageSelection = preset.value
     dcmConverted = []
     dicomPick.classList.add('hidden')
-    await loadFromFile(file)
     setStatus(`Loaded ${preset.label} — choose a method and click Apply.`)
   } finally {
     spin(false)
@@ -344,6 +345,7 @@ async function ensureRefaceFiles(): Promise<typeof refaceFiles> {
 // become the pristine input that Apply defaces. The defaced result is displayed
 // with asSource=false so it never replaces the source.
 async function loadFromFile(file: File, asSource = true): Promise<void> {
+  if (isCleanedUp) return
   // Fail closed: a source (asSource=true) is un-defaced, so clear Save eligibility
   // BEFORE the awaitable display — a load rejection after a prior deface must not
   // leave Save enabled over the un-defaced image (same pattern as makeBrainMask).
@@ -373,7 +375,7 @@ async function loadFromFile(file: File, asSource = true): Promise<void> {
 // --- Deface ---
 async function runDeface(): Promise<void> {
   if (!sourceFile || !refFiles) return
-  const method = methodSelect.value // allineate[_robustfov][_hel] | reface|rescalp[_robustfov] | mindgrab[_robust][8]
+  const method = methodSelect.value // allineate[_hel][_robustfov] | reface|rescalp[_robustfov] | mindgrab[_robust][8]
 
   // reface/rescalp REPLACE the surface with a synthetic one instead of zeroing it:
   // `-reface <tmpl> <shell> <weight>` registers the subject to the template, back-projects
@@ -689,12 +691,11 @@ async function cleanup(): Promise<void> {
   if (isCleanedUp) return
   isCleanedUp = true
   listeners.abort()
-  // Terminate the niimath worker FIRST (don't await `pending`): an in-flight run is one
+  // Dispose the niimath worker FIRST (don't await `pending`): an in-flight run is one
   // uninterruptible WASM call — a Hellinger fit would stall teardown for minutes. The
-  // terminated run never resolves, so we deliberately drop the await; any run that already
-  // resolved hits `if (isCleanedUp) return` before touching nv/ctx.
+  // wrapper rejects the interrupted run; enqueue suppresses that expected teardown failure.
   try {
-    ;(niimath as unknown as { worker?: Worker }).worker?.terminate()
+    niimath.dispose('niimath worker disposed during cleanup')
   } catch {
     // worker may already be gone
   }

@@ -24,9 +24,11 @@ Hellinger fallback; `-cost hel` for the exhaustive engine) and `-reface <tmpl> <
 ## Provenance
 
 - **Source repo:** `rordenlab/niimath` (local: `/Users/chris/src/niimath`)
-- **Built from:** the working tree atop commit `2530fe0` — the `-reface` feature
-  (`src/reface.c`, the `-reface` dispatch, and the `reface()` JS binding) was still
-  **uncommitted** at build time. Re-stamp this with a real SHA once niimath commits it.
+- **Built from:** commit `cec198648a7efe2d900fd0494bf102502aabca5f`
+  (`cec1986`, "Back-port allineate reface/qwarp + fast-engine features").
+- **Verified:** built from a clean working tree at that commit; `index.js`, `worker.js`,
+  `niimath.js`, and `niimath.wasm` here are byte-identical (sha256) to the `js/dist/`
+  output of the rebuild recipe below. Re-check with `shasum -a256` after any rebuild.
 - **License:** BSD-2-Clause. The GPL `spm_coreg`/`spm_deface` module is **not** built or
   shipped (no `index-gpl`/`niimath-gpl`/`worker-gpl`/`./gpl`).
 

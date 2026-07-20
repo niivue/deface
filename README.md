@@ -4,6 +4,8 @@ Remove facial features from a brain MRI for anonymization, **entirely in your br
 
 Live demo: deploys as a GitHub Project Page at `https://<org>.github.io/deface/`.
 
+The **Image** picker at the left of the toolbar swaps in other scans (T1, T2, PD, FLAIR, CT) so you can judge how each method behaves before running it on your own data. It starts on a bundled cropped T1; the rest stream on demand from the `niivue-demo-images` repository.
+
 ## How it works
 
 All processing runs in WebAssembly + WebGPU on your machine so your images are not shared with the cloud:
