@@ -20,7 +20,7 @@ import NiiVueGPU, {
   SLICE_TYPE,
 } from '@niivue/niivue'
 import { runDcm2niix, traverseDataTransferItems } from './dcm2niix/index'
-import { Niimath } from './niimath'
+import { Niimath } from '@niivue/niimath'
 import type { MindgrabInferer } from './mindgrab/index'
 
 const T1_URL = `${import.meta.env.BASE_URL}t1_crop.nii.gz`
