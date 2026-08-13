@@ -80,10 +80,15 @@ const imageSelect = $<HTMLSelectElement>('imageSelect')
 const webgpuDialog = $<HTMLDialogElement>('webgpuDialog')
 
 // --- NiiVue setup ---
-// The NiiVue constructor is GPU-free; attachTo() acquires the WebGPU device and
-// throws on a browser without it. So construct here but defer attachTo to init(),
-// AFTER the navigator.gpu guard, or a no-WebGPU browser gets an unhandled
-// top-level rejection instead of the friendly "needs WebGPU" message.
+// The NiiVue constructor is GPU-free; attachTo() acquires the device and can
+// throw. So construct here but defer attachTo to init(), where it is inside a
+// try, or a browser that can get neither backend gets an unhandled top-level
+// rejection instead of a legible message.
+//
+// The default '@niivue/niivue' entry is NVControl, which serves BOTH backends and
+// picks WebGL2 itself when navigator.gpu is absent. The './webgl2' subpath is a
+// smaller WebGL2-only build, but it does not export MULTIPLANAR_TYPE, SHOW_RENDER
+// or SLICE_TYPE, so switching to it is not the drop-in it looks like.
 const nv = new NiiVueGPU({ isDragDropEnabled: false, backgroundColor: [0, 0, 0, 1] })
 type ExtCtx = ReturnType<typeof nv.createExtensionContext>
 let ctx: ExtCtx | null = null
@@ -566,26 +571,23 @@ async function handleDrop(filesPromise: Promise<File[]>): Promise<void> {
 
 // --- Init ---
 async function init(): Promise<void> {
-  // NiiVue's attachTo() acquires a WebGPU device and throws without one. But
-  // navigator.gpu can exist while requestAdapter() returns null, device creation
-  // fails, or the GPU is blocklisted — so guard the fast case AND catch attachTo()
-  // failures, giving a friendly message instead of an unhandled console.error in
-  // every WebGPU-unavailable path. (mindgrab's stricter shader-f16 requirement is a
-  // separate gate via #webgpuDialog.)
-  const noWebGpu =
-    'This browser/GPU can’t initialize WebGPU — deface needs a recent desktop Chrome, Edge, or Safari.'
-  if (!navigator.gpu) {
-    setStatus(noWebGpu)
-    return
-  }
+  // NO navigator.gpu gate here, and that absence is the point. NiiVue's
+  // NVControlBase already downgrades itself — "WebGPU not available, falling back
+  // to WebGL2" — so refusing on a missing navigator.gpu turned a browser that
+  // renders perfectly well into a dead page. That is exactly Linux Firefox and
+  // Chrome, neither of which enables WebGPU by default: they were shown
+  // "deface needs a recent desktop Chrome" while running one.
+  //
+  // attachTo() is still wrapped, because a machine can fail to get EITHER
+  // backend, and that is a real refusal rather than a downgrade.
   try {
     await attachNiiVue()
   } catch (err) {
-    // Almost always genuine WebGPU unavailability; warn (not error, so the smoke's
-    // console.error gate stays meaningful) so a non-WebGPU init bug isn't silently
-    // mislabeled. Either way return fail-closed: sourceFile/refFiles stay unset.
-    console.warn('deface: WebGPU init failed', err)
-    setStatus(noWebGpu)
+    // warn, not error, so the smoke's console.error gate stays meaningful.
+    // Fail closed either way: sourceFile/refFiles stay unset.
+    console.warn('deface: renderer init failed', err)
+    setStatus('This browser/GPU can’t initialize WebGPU or WebGL2 — deface needs ' +
+      'a recent desktop browser with hardware acceleration enabled.')
     return
   }
   setStatus('Loading default image + MNI template…')
