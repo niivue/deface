@@ -7,7 +7,7 @@
   <!-- empty favicon: suppress the browser's default /favicon.ico request (404) -->
   <link rel="icon" href="data:," />
   <title>browser MRI defacing</title>
-  <script type="module" crossorigin src="/deface/assets/index-uVeUx4HJ.js"></script>
+  <script type="module" crossorigin src="/deface/assets/index-7DZxj-Ix.js"></script>
   <link rel="stylesheet" crossorigin href="/deface/assets/index-ueQ8XPau.css">
 </head>
 
@@ -17,7 +17,7 @@
       <label for="imageSelect">Image</label>
       <select id="imageSelect" title="Choose a demo image to evaluate"></select>
       <label for="methodSelect">Method</label>
-      <select id="methodSelect" title="niimath affine defacing (BSD allineate: fast or Hellinger engine) or MindGrab brain extraction (WebGPU)">
+      <select id="methodSelect" title="niimath affine defacing (BSD allineate: fast or Hellinger engine) or MindGrab brain extraction">
         <option value="allineate" selected>allineate (fast)</option>
         <option value="allineate_robustfov">allineate (fast, robustfov)</option>
         <option value="allineate_hel">allineate (Hellinger)</option>
@@ -26,10 +26,10 @@
         <option value="reface_robustfov">reface (robustfov, T1 only)</option>
         <option value="rescalp">rescalp (T1 only)</option>
         <option value="rescalp_robustfov">rescalp (robustfov, T1 only)</option>
-        <option value="mindgrab">mindgrab (WebGPU)</option>
-        <option value="mindgrab_robust">mindgrab robustfov (WebGPU)</option>
-        <option value="mindgrab8">mindgrab 8mm border (WebGPU)</option>
-        <option value="mindgrab_robust8">mindgrab robustfov + 8mm (WebGPU)</option>
+        <option value="mindgrab">mindgrab</option>
+        <option value="mindgrab_robust">mindgrab robustfov</option>
+        <option value="mindgrab8">mindgrab 8mm border</option>
+        <option value="mindgrab_robust8">mindgrab robustfov + 8mm</option>
       </select>
       <button id="applyBtn">Apply</button>
       <button disabled id="saveBtn">Save Image</button>
@@ -84,9 +84,11 @@
           compositing it onto a T2/FLAIR/PD/CT scan yields a surface that does not match the
           host image — use an <strong>allineate</strong> or <strong>mindgrab</strong> method for
           those</li>
-        <li><strong>mindgrab</strong> — deep-learning brain extraction (skull-strip): a
-          <a href="https://github.com/neuroneural/brainchop" target="_blank" rel="noopener">brainchop</a>-style
-          model runs entirely on the GPU (<strong>WebGPU, shader-f16</strong>) to mask out everything but the brain</li>
+        <li><strong>mindgrab</strong> — deep-learning brain extraction (skull-strip): the
+          <a href="https://github.com/neuroneural/brainchop" target="_blank" rel="noopener">brainchop</a>
+          MeshNet model masks out everything but the brain, running in your browser via
+          <a href="https://www.npmjs.com/package/@brainchop/mindgrab" target="_blank" rel="noopener">@brainchop/mindgrab</a>
+          — on <strong>WebGPU</strong> where available, otherwise <strong>WebGL2</strong></li>
       </ul>
       <p>Visualization uses <a href="https://niivue.com/" target="_blank" rel="noopener">NiiVue</a>;
         DICOM import uses <a href="https://github.com/rordenlab/dcm2niix" target="_blank" rel="noopener">dcm2niix</a>.
@@ -94,19 +96,21 @@
       <p><small>Defacing uses the BSD-2 build of
         <a href="https://github.com/rordenlab/niimath" target="_blank" rel="noopener">niimath</a>
         compiled to WebAssembly and bundled with this app, so it is licensed <strong>BSD-2-Clause</strong> ·
-        thread-deterministic registration, fails closed on out-of-memory. Requires a browser with
-        WebGPU (recent desktop Chrome, Edge, or Safari).</small></p>
+        thread-deterministic registration, fails closed on out-of-memory. Brain extraction uses
+        <a href="https://www.npmjs.com/package/@brainchop/mindgrab" target="_blank" rel="noopener">@brainchop/mindgrab</a>
+        (<strong>MIT</strong>). Requires a browser with WebGPU (recent desktop Chrome, Edge, or
+        Safari).</small></p>
       <button autofocus id="closeAboutBtn" value="default">Close</button>
     </form>
   </dialog>
 
   <dialog id="webgpuDialog">
     <form method="dialog">
-      <h3>MindGrab needs WebGPU</h3>
-      <p>The <strong>mindgrab</strong> brain-extraction method runs a neural network on the GPU and needs
-        <strong>WebGPU with the <code>shader-f16</code> feature</strong> (recent desktop Chrome, Edge, or Safari).
-        This browser doesn't provide it.</p>
-      <p>Use an <strong>allineate</strong> method instead — they run in WebAssembly and need no WebGPU.</p>
+      <h3>MindGrab can't run here</h3>
+      <p>The <strong>mindgrab</strong> brain-extraction method runs a neural network in the browser. It uses
+        <strong>WebGPU</strong> where that is available, falls back to <strong>WebGL2</strong>, and none of
+        them can start on this browser.</p>
+      <p>Use an <strong>allineate</strong> method instead — they run in WebAssembly and need no GPU.</p>
       <button autofocus value="default">Close</button>
     </form>
   </dialog>
