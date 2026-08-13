@@ -123,6 +123,16 @@ try {
   if (!(await page.isDisabled('#saveBtn'))) await fail('Save enabled before any deface (M2 privacy footgun)', page)
   console.log('✓ App initialized (NiiVue attached, default image + refs loaded), Save correctly disabled pre-deface')
 
+  // This preview must NOT be cross-origin isolated, because GitHub Pages cannot be:
+  // it sets no response headers, so @brainchop/mindgrab's threaded CPU module is off
+  // the table there and `auto` stops at WebGL2. vite preview falls back to
+  // server.headers, which DID make this page isolated once — a rehearsal quietly
+  // offering a fallback the deployed site lacks. preview.headers: {} in
+  // vite.config.ts is what keeps them apart; this is the check that it stays that way.
+  if (await page.evaluate(() => globalThis.crossOriginIsolated === true))
+    await fail('the preview is cross-origin isolated; it must match Pages, which cannot be', page)
+  console.log('✓ preview is not cross-origin isolated (matches GitHub Pages)')
+
   // Image picker is populated and points at the bundled default. Only the presence/wiring
   // is asserted — actually selecting a remote demo image would make the smoke depend on
   // raw.githubusercontent.com, which would be flaky offline/in CI.
