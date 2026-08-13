@@ -19,6 +19,14 @@ export default defineConfig({
       'Cross-Origin-Embedder-Policy': 'require-corp',
     },
   },
+  preview: {
+    // Empty on purpose, and NOT inherited: vite preview falls back to
+    // server.headers, which would make the rehearsal cross-origin isolated when
+    // the thing it rehearses -- GitHub Pages -- cannot be. Measured: preview
+    // reported crossOriginIsolated true until this was added, quietly offering a
+    // CPU fallback the deployed site does not have.
+    headers: {},
+  },
   worker: {
     format: 'es',
   },
