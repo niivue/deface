@@ -7,6 +7,17 @@ export default defineConfig({
   server: {
     open: '/index.html',
     port: 8091,
+    // Cross-origin isolation, which is what @brainchop/mindgrab's threaded CPU
+    // module needs to instantiate at all -- it imports SharedArrayBuffer-backed
+    // memory. DEV ONLY, and deliberately so: GitHub Pages cannot set response
+    // headers, so the deployed site has no CPU fallback and `auto` stops at
+    // WebGL2. These headers are what makes that path testable locally.
+    // require-corp is safe here because every asset this app loads is
+    // same-origin.
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+    },
   },
   worker: {
     format: 'es',

@@ -21,7 +21,6 @@ import NiiVueGPU, {
 } from '@niivue/niivue'
 import { runDcm2niix, traverseDataTransferItems } from './dcm2niix/index'
 import { Niimath } from '@niivue/niimath'
-import type { MindgrabInferer } from './mindgrab/index'
 
 const T1_URL = `${import.meta.env.BASE_URL}t1_crop.nii.gz`
 const MNI_URL = `${import.meta.env.BASE_URL}avg152T1.nii.gz`
@@ -124,71 +123,38 @@ let niimathReady: Promise<void> | null = null
 niimath.setOutputDataType('input') // preserve source datatype on save (smaller output)
 
 // --- mindgrab (deep-learning brain extraction) ---
-// Lazily loaded on first mindgrab Apply so the ~2500-line generated model + the
-// conform worker stay out of the initial bundle. mindgrab needs WebGPU with
-// shader-f16 even though the app itself can render on WebGL2; getBrainGPUDevice()
-// returns null when that's unavailable, which gates the webgpuDialog.
-let maskCtx: ExtCtx | null = null
-let maskDevice: GPUDevice | null | undefined // undefined: untried; null: unavailable
-let maskInferer: MindgrabInferer | null = null
-let conformRegistered = false
+// @brainchop/mindgrab owns the whole chain — conform, the MeshNet layers, the
+// largest-connected-component cleanup, the mm border, and the reslice back onto
+// the input grid — inside a wasm module, so this app holds no model, no device
+// and no state for it. The module's own .js/.wasm are staged into
+// public/brainchop/ by scripts/copy-brainchop.mjs and located through
+// `assetPath`; the package's loader computes that URL at run time, which is
+// exactly why Vite cannot emit them for us.
+const BRAINCHOP_ASSETS = `${import.meta.env.BASE_URL}brainchop/`
 
-async function getMaskInferer(): Promise<MindgrabInferer | null> {
-  const { getBrainGPUDevice, loadMindgrab } = await import('./mindgrab/index')
-  if (maskDevice === undefined) maskDevice = await getBrainGPUDevice()
-  if (!maskDevice) return null
-  if (!maskCtx) maskCtx = nv.createExtensionContext()
-  if (!conformRegistered) {
-    const { conform } = await import('./mindgrab/transforms')
-    maskCtx.registerVolumeTransform(conform)
-    conformRegistered = true
-  }
-  if (!maskInferer) {
-    maskInferer = await loadMindgrab(
-      maskDevice,
-      `${import.meta.env.BASE_URL}models/net_mindgrab.safetensors`,
-    )
-  }
-  return maskInferer
-}
-
-// Tear down mindgrab's GPU device + model buffers so the next Apply re-acquires a
-// fresh one. Called on any mindgrab failure: a lost device or a model left in a bad
-// state would otherwise make every retry fail until a page reload.
-async function resetMaskGpu(): Promise<void> {
-  try {
-    await maskInferer?.dispose()
-  } catch {
-    // already gone / device lost
-  }
-  try {
-    maskDevice?.destroy()
-  } catch {
-    // already gone
-  }
-  maskInferer = null
-  maskDevice = undefined // re-request from getBrainGPUDevice() next time
-}
-
-// Run mindgrab on `src` (the MODEL input) → a brain mask in conformed (256³) space.
-// Loads `src` onto the canvas (showing it during the slow inference) to get a parsed
-// NVImage for the conform transform. `src` is the pristine source (conformed here by
-// prepareInput) or, for robustfov, an already-conformed 256³ crop. The caller reslices
-// the returned mask back onto the matching NATIVE-resolution image to keep input res.
-async function makeBrainMask(inferer: MindgrabInferer, src: File): Promise<File> {
+// Skull-strip `src` and return it with everything outside the brain floored.
+//
+// Runs in the package's own Worker (`worker: true`): the WebGL2 fallback module
+// is synchronous, so on the main thread it would freeze the page for seconds,
+// and terminate() is also the only real cancellation. It picks WebGPU, then
+// WebGL2, then the threaded CPU module, and refuses rather than downgrading
+// silently — `result.backend` says which one ran.
+async function brainExtract(src: File, borderMm: number): Promise<{ file: File; backend: string }> {
   setStatus('Brain extraction (mindgrab)…')
-  // Fail closed: clear hasDefaced BEFORE displaying the un-defaced source, so even if
-  // loadVolumes rejects mid-swap the source can never be saved as defaced.nii.gz
-  // (privacy). It's re-enabled only when the final defaced result loads (asSource=false).
+  // Fail closed: the displayed volume is about to be replaced, so drop Save
+  // eligibility first. Re-enabled only when the result loads (asSource=false).
   hasDefaced = false
   updateButtons()
-  await nv.loadVolumes([{ url: src, name: src.name } as ImageFromUrlOptions])
-  if (isCleanedUp) throw new Error('cleaned up during mindgrab')
-  const srcImg = nv.volumes[0]
-  const { prepareInput, buildMaskNifti } = await import('./mindgrab/index')
-  const { conformed, img32 } = await prepareInput(maskCtx!, srcImg)
-  const [labels] = await inferer(img32)
-  return new File([buildMaskNifti(conformed, labels)], 'maskconf.nii')
+  const { segment } = await import('@brainchop/mindgrab')
+  const { image, backend } = await segment(await src.arrayBuffer(), {
+    model: 'mindgrab',
+    // Grow the brain mask by N mm before it is applied, instead of a tight
+    // strip. The face, far from the brain, goes either way.
+    ...(borderMm > 0 ? { borderMm } : {}),
+    worker: true,
+    assetPath: BRAINCHOP_ASSETS,
+  })
+  return { file: new File([image], 'defaced.nii'), backend }
 }
 
 const listeners = new AbortController()
@@ -417,85 +383,68 @@ async function runDeface(): Promise<void> {
     return
   }
 
-  // mindgrab needs WebGPU + shader-f16; if unavailable, explain rather than fail.
+  // mindgrab needs a GPU or a cross-origin isolated page; if neither, explain
+  // rather than fail.
   if (method.startsWith('mindgrab')) {
     // Two independent knobs encoded in the method name:
-    // - `8` suffix: keep an 8 mm shell of tissue around the brain (brainchop-cli's
-    //   `-close 1 8 0` grow) instead of a tight skull-strip; the face, far from the
-    //   brain, is still removed.
-    // - `robust`: run the WHOLE pipeline on a `-robustfov`-cropped copy. robustfov
-    //   changes the image extent (drops inferior slices); feeding the pristine source
-    //   to conform but reslicing/masking against the cropped one would mix coordinate
-    //   spaces and corrupt the mask — so crop first and use that single image throughout.
+    // - `8` suffix: keep an 8 mm shell of tissue around the brain instead of a
+    //   tight skull-strip; the face, far from the brain, is still removed.
+    // - `robust`: crop with `-robustfov` FIRST and skull-strip that copy, so the
+    //   output keeps the crop. Everything downstream works on that one image, so
+    //   no two coordinate spaces are ever mixed.
     const borderMm = method.endsWith('8') ? 8 : 0
     const useRobustfov = method.includes('robust')
     spin(true)
-    // First-use model fetch + WebGPU pipeline compile is the heaviest setup; show
-    // busy feedback before it (the UI is already disabled by enqueue()).
+    // Fetching and instantiating the wasm module is the heaviest setup; show busy
+    // feedback before it (the UI is already disabled by enqueue()).
     setStatus('Loading mindgrab model…')
     const t0 = performance.now()
     try {
-      // Acquire INSIDE the try so a loadMindgrab failure (model fetch, pipeline
-      // compile, device-loss during load) hits resetMaskGpu() in the catch. The
-      // unavailable-device case returns null (not a throw) → dialog, no reset.
-      const inferer = await getMaskInferer()
-      if (!inferer) {
+      // Captured, because runDeface's `sourceFile` null check does not survive an
+      // await — it is module-level mutable state.
+      let src: File = sourceFile
+      if (useRobustfov) {
+        await ensureNiimath()
+        if (isCleanedUp) return
+        // gz(0): niimath reads/writes uncompressed .nii (no per-run gzip/gunzip)
+        // — faster round trips. The blob stays in memory (NiiVue re-gzips on Save).
+        src = new File(
+          [await niimath.image(sourceFile).gz(0).robustfov().run('robustfov.nii')],
+          'robustfov.nii',
+        )
+        if (isCleanedUp) return
+      }
+      // No reslice and no mask multiply here any more: the module conforms
+      // internally, grows the border on the conformed grid and reslices the
+      // result back onto THIS image's own grid, so the output is already at the
+      // input resolution. It floors non-brain voxels to the image minimum rather
+      // than to zero — identical for any volume whose minimum is 0, and measured
+      // as a strict subset of the old mask-multiply on the bundled subject
+      // (18,391 of 19.2M voxels removed that the old path kept, none the other
+      // way), which is the safe direction for a defacer.
+      const { file, backend } = await brainExtract(src, borderMm)
+      if (isCleanedUp) return
+      await loadFromFile(file, false)
+      const tag = `${useRobustfov ? 'robustfov + ' : ''}${borderMm > 0 ? `${borderMm} mm border` : 'tight'}`
+      setStatus(
+        `Brain-extracted with mindgrab (${tag}, ${backend}) ` +
+        `(${Math.round(performance.now() - t0)} ms)`,
+      )
+    } catch (err) {
+      // A refusal is not a failure: every backend declined, and the message names
+      // all three reasons. `no-webgpu` is the package's code for that, cross-origin
+      // isolation included. Checked structurally so the package stays lazily
+      // imported — a value import of BrainchopError would pull it into the entry
+      // bundle.
+      if ((err as { code?: string })?.code === 'no-webgpu') {
         webgpuDialog.showModal()
-        setStatus('mindgrab needs WebGPU (shader-f16) — try an allineate method.')
+        setStatus('mindgrab found no usable GPU here — try an allineate method.')
         return
       }
-      await ensureNiimath()
-      if (isCleanedUp) return
-      // mindgrab segments in conformed 256³ 1 mm space, but — like the allineate deface —
-      // the output should be at the INPUT resolution (e.g. 0.75 mm), cropped if robustfov
-      // is used. So split the two roles (mirrors brainchop's `-i` inverse):
-      //   srcNative → the reslice/mul target: native resolution (robustfov-cropped if set)
-      //   srcModel  → the model input: must be conformed 256³ 1 mm
-      // For robustfov both derive from one `-robustfov` crop so they share a world frame;
-      // the conformed-space mask then reslices back onto srcNative exactly at native res
-      // (verified). robustfov drops inferior slices, so its crop is no longer 256³ — feeding
-      // it straight to the model would route prepareInput through the niivue conform worker
-      // (which mishandled the cropped geometry); `-conform` restores the exact 256³ canonical
-      // the model expects, which prepareInput's isConformed fast-path then uses directly.
-      // gz(0): niimath reads/writes uncompressed .nii (no per-run gzip/gunzip) — faster
-      // round trips. The blobs stay in-memory (NiiVue re-gzips only the final Save).
-      const srcNative = useRobustfov
-        ? new File(
-            [await niimath.image(sourceFile).gz(0).robustfov().run('robustfov.nii')],
-            'robustfov.nii',
-          )
-        : sourceFile
-      if (isCleanedUp) return
-      const srcModel = useRobustfov
-        ? new File(
-            [await niimath.image(srcNative).gz(0).conform().run('robustfov_conf.nii')],
-            'robustfov_conf.nii',
-          )
-        : sourceFile
-      if (isCleanedUp) return
-      const maskConf = await makeBrainMask(inferer, srcModel)
-      if (isCleanedUp) return
-      // Reslice the conformed brain mask onto srcNative's grid (nearest-neighbour → back
-      // to native resolution), then multiply srcNative by it so only brain voxels survive
-      // — face and skull are zeroed. For an N mm border, grow the mask with `-close 1 N 0`
-      // (binarize at 1, dilate N mm, erode 0) instead of a plain `-bin`. Two serial niimath
-      // runs: the mask is primary for the reslice; srcNative is primary for the multiply so
-      // the output keeps its datatype (-odt input).
-      const resliced = niimath.image(maskConf).gz(0).resliceNN(srcNative)
-      const grown = borderMm > 0 ? resliced.close(1, borderMm, 0) : resliced.bin()
-      const maskNat = new File([await grown.run('masknat.nii')], 'masknat.nii')
-      if (isCleanedUp) return
-      const blob = await niimath.image(srcNative).gz(0).mulImage(maskNat).run('defaced.nii')
-      if (isCleanedUp) return
-      await loadFromFile(new File([blob], 'defaced.nii'), false)
-      const tag = `${useRobustfov ? 'robustfov + ' : ''}${borderMm > 0 ? `${borderMm} mm border` : 'tight'}`
-      setStatus(`Brain-extracted with mindgrab (${tag}) (${Math.round(performance.now() - t0)} ms)`)
-    } catch (err) {
-      // A failed run can corrupt the niimath heap and/or leave the GPU device in a
-      // bad state; reset both so the next Apply starts clean. Rethrow so enqueue()
-      // still reports "Failed: …".
+      // A failed run can corrupt the niimath heap; recreate it before the next
+      // Apply. The wasm module needs no reset — it is created and terminated per
+      // call inside the package's worker. Rethrow so enqueue() reports "Failed: …".
       resetNiimathWorker()
-      await resetMaskGpu()
       throw err
     } finally {
       spin(false)
@@ -699,33 +648,10 @@ async function cleanup(): Promise<void> {
   } catch {
     // worker may already be gone
   }
-  // Release mindgrab's GPU model buffers + device (~1.4 GB) and its conform worker
-  // + extension context, if it ever loaded. The NiiVue context disposal below does
-  // not own the conform worker, so terminate it explicitly. Each step is isolated:
-  // this runs during HMR/page teardown, so one failure must not skip the rest.
-  try {
-    await maskInferer?.dispose()
-  } catch {
-    // already gone / device lost
-  }
-  try {
-    maskDevice?.destroy()
-  } catch {
-    // already gone
-  }
-  if (conformRegistered) {
-    try {
-      const { disposeConformWorker } = await import('./mindgrab/transforms')
-      disposeConformWorker()
-    } catch {
-      // module/import may be unavailable during teardown
-    }
-  }
-  try {
-    maskCtx?.dispose()
-  } catch {
-    // best-effort
-  }
+  // Nothing to release for mindgrab: @brainchop/mindgrab creates its Worker per
+  // call and terminates it in a finally, which takes the module's heap, its GPU
+  // device and any thread pool with it. An in-flight run outlives this teardown
+  // by at most one segmentation and holds nothing afterwards.
   try {
     ctx?.dispose() // null if WebGPU was unavailable (attachNiiVue never ran)
   } catch {
