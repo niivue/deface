@@ -158,6 +158,16 @@ async function brainExtract(src: File, borderMm: number): Promise<{ file: File; 
     ...(borderMm > 0 ? { borderMm } : {}),
     worker: true,
     assetPath: BRAINCHOP_ASSETS,
+    // Five minutes, because the package's default here would be FIFTEEN. With no
+    // `backend` named it budgets for the slowest one the call could reach --
+    // the threaded CPU module -- which on GitHub Pages is unreachable anyway,
+    // there being no COOP/COEP. It matters most for WebGL2: that module is
+    // synchronous, so run.ts cannot arm a timer inside the worker at all, and
+    // this outer bound is the only one. Until it fires the whole UI is disabled
+    // with no cancel, so 15 minutes of a frozen page is the wrong end to err on.
+    // Generous even so: WebGL2 is 3.8 s on an M4 Pro, and this allows for a
+    // software rasterizer two orders of magnitude slower.
+    timeoutMs: 300_000,
   })
   return { file: new File([image], 'defaced.nii'), backend }
 }
