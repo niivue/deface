@@ -162,31 +162,51 @@ try {
   await page.screenshot({ path: join(here, 'smoke-reface.png') })
   console.log('✓ reface ran and displayed')
 
-  // 4b. mindgrab: needs WebGPU + shader-f16. Headless SwiftShader lacks f16, so the
-  // expected outcome here is the graceful "needs WebGPU" dialog (NOT a crash). On a
-  // real f16 GPU the run completes instead — accept either, fail only on neither.
+  // 4b. mindgrab, via @brainchop/mindgrab. THREE outcomes are acceptable here and
+  // exactly three, because what this browser can offer is not knowable in advance:
+  // headless SwiftShader has no shader-f16, so WebGPU is out, and whether its WebGL2
+  // is usable is the software rasterizer's business. So accept a completed run, the
+  // capability dialog, or a status carrying the package's own refusal — and fail on
+  // anything else, including silence. An arbitrary "Failed: …" is NOT accepted: the
+  // point of this check is that the app never quietly does nothing, and a failure it
+  // cannot name is exactly the case that would slip through.
+  //
+  // The page is NOT cross-origin isolated (vite preview sends no COOP/COEP, matching
+  // GitHub Pages), so the threaded CPU module is off the table by design.
   await page.selectOption('#methodSelect', 'mindgrab')
   await page.click('#applyBtn')
-  const mindgrabOutcome = await page
+  const outcome = await page
     .waitForFunction(
-      () =>
-        document.getElementById('webgpuDialog')?.open === true ||
-        (document.getElementById('statusMsg')?.textContent || '').includes('Brain-extracted with mindgrab'),
+      () => {
+        if (document.getElementById('webgpuDialog')?.open === true) return { kind: 'dialog' }
+        const status = document.getElementById('statusMsg')?.textContent || ''
+        if (status.includes('Brain-extracted with mindgrab')) return { kind: 'ran', status }
+        // BrainchopError messages name the backend that refused and why.
+        if (status.startsWith('Failed:') &&
+            /webgpu|webgl2|cpu backend|cross-origin|adapter|shader-f16|mindgrab/i.test(status))
+          return { kind: 'refused', status }
+        return false
+      },
       undefined,
       { timeout: 120000 },
     )
-    .then(() => true)
-    .catch(() => false)
-  if (!mindgrabOutcome) await fail('mindgrab neither completed nor showed the WebGPU dialog', page)
-  const usedDialog = await page.evaluate(() => document.getElementById('webgpuDialog')?.open === true)
-  if (!usedDialog) await page.screenshot({ path: join(here, 'smoke-mindgrab.png') })
-  console.log(usedDialog ? '✓ mindgrab gated on missing WebGPU/f16 (dialog shown)' : '✓ mindgrab ran and displayed')
-  if (usedDialog) {
+    .then((h) => h.jsonValue())
+    .catch(() => null)
+  if (!outcome)
+    await fail('mindgrab neither completed, nor showed the dialog, nor named a refusal', page)
+  if (outcome.kind === 'ran') {
+    // The status carries the backend that actually ran, so this line is evidence
+    // of WHICH path was exercised rather than merely that one was.
+    await page.screenshot({ path: join(here, 'smoke-mindgrab.png') })
+    console.log(`✓ mindgrab ran and displayed — ${outcome.status}`)
+  } else if (outcome.kind === 'dialog') {
+    console.log('✓ mindgrab gated on a browser with no usable backend (dialog shown)')
     await page.click('#webgpuDialog button') // dismiss so it doesn't mask later checks
+  } else {
+    console.log(`✓ mindgrab refused legibly — ${outcome.status}`)
   }
-  // The mindgrab border/robustfov variants differ only by argv flags (`-close 1 8 0` vs
-  // `-bin`, and an upstream `-robustfov` crop) — that morphology/crop behavior is niimath's
-  // to test. One mindgrab outcome (inference or the capability dialog) covers the app wiring.
+  // The border/robustfov variants differ only by one CLI flag into the same module and
+  // an upstream `-robustfov` crop. One mindgrab outcome covers the app wiring.
 
   // 5. (optional) the slow exhaustive Hellinger path (`-cost hel`). Single-threaded WASM,
   // minutes on a full-head scan — hence gated behind SMOKE_FULL.

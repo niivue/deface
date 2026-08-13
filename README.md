@@ -24,7 +24,7 @@ All processing runs in WebAssembly + WebGPU on your machine so your images are n
   **T1-weighted images only:** the shell supplies T1-like intensities, so compositing it onto
   a T2/FLAIR/PD/CT scan produces a surface that doesn't match the host image — use an
   **allineate** or **mindgrab** method for those.
-- **[brainchop mindgrab](https://github.com/neuroneural/brainchop)** — an edge-based AI model for omnimodal brain extraction, run entirely on the GPU. It masks out everything but the brain, so it removes the face along with the skull and scalp. Variants combine two knobs — a tight skull-strip vs. an **8mm** tissue margin around the brain, and optional **robustfov** neck/inferior-slice cropping: **mindgrab**, **mindgrab robustfov**, **mindgrab 8mm border**, and **mindgrab robustfov + 8mm**. Requires **WebGPU with `shader-f16`** (recent desktop Chrome, Edge, or Safari).
+- **[brainchop mindgrab](https://github.com/neuroneural/brainchop)** — an edge-based AI model for omnimodal brain extraction, run entirely in the browser via **[@brainchop/mindgrab](https://www.npmjs.com/package/@brainchop/mindgrab)**. It masks out everything but the brain, so it removes the face along with the skull and scalp. Variants combine two knobs — a tight skull-strip vs. an **8mm** tissue margin around the brain, and optional **robustfov** neck/inferior-slice cropping: **mindgrab**, **mindgrab robustfov**, **mindgrab 8mm border**, and **mindgrab robustfov + 8mm**. Runs on **WebGPU** where available and falls back to **WebGL2**, so it needs no particular GPU feature — only a browser with one of the two.
 - **[NiiVue](https://niivue.com/)** renders the image.
 - **[dcm2niix](https://github.com/rordenlab/dcm2niix)** converts dropped DICOM folders to NIfTI.
 
